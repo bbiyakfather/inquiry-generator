@@ -948,11 +948,21 @@ function confirmAIDraft() {
 }
 
 /* ===================================================================
-   설정
+   설정 (탭: 공통 | 견적서 | 회의록)
 =================================================================== */
+let _settingsTab = 'common';
+
+function showSettingsTab(tab) {
+  _settingsTab = tab;
+  $$('#settings-tabs .tab').forEach(t => t.classList.toggle('active', t.dataset.stab === tab));
+  ['common', 'quote', 'minutes'].forEach(k =>
+    $(`#stab-${k}`).classList.toggle('hidden', k !== tab));
+}
+
 function renderSettings() {
   const cfg = state.config;
   if (!cfg) return;
+  showSettingsTab(_settingsTab);
   // 단가표 연도
   const ySel = $('#s-price-year');
   const years = Object.keys(cfg.unit_prices || {}).sort();
@@ -968,6 +978,24 @@ function renderSettings() {
     `<label${k === 'address' ? ' class="span2"' : ''}>${label}<input data-ck="${k}" value="${esc((cfg.company || {})[k] || '')}"></label>`).join('');
   // Google Drive 상태
   loadDriveStatus();
+  // 유형별 작업 폴더
+  $('#s-quote-folder-path').textContent = state.folder || '폴더 미지정';
+  $('#s-quote-folder-path').title = state.folder || '';
+  $('#s-minutes-folder-path').textContent = state.minutesFolder || '폴더 미지정 (견적서 폴더 공용)';
+  $('#s-minutes-folder-path').title = state.minutesFolder || '';
+  // 회의록 양식 정보
+  call('get_minutes_template').then(r => {
+    const name = $('#mn-tpl-name'), st = $('#mn-tpl-status');
+    if (!name) return;
+    if (r.ok) {
+      name.textContent = r.name;
+      name.title = r.path || '';
+      st.textContent = r.exists ? '✓ 내장' : '⚠ 파일 없음';
+    } else {
+      name.textContent = '확인 실패';
+      st.textContent = '';
+    }
+  });
 }
 
 function renderPriceTable(year) {
@@ -1382,7 +1410,7 @@ const TOUR_STEPS = [
   { view: 'minutes', sub: 'dashboard', target: '#btn-new-minutes', placement: 'bottom',
     title: '⑦ 회의록',
     body: '회의 메모·녹음 전사본으로 AI가 회의록 초안을 만들고 HWPX로 생성합니다. 생성된 회의록은 이 대시보드에서 관리·재편집할 수 있습니다.' },
-  { view: 'settings', target: '#card-ai-engine', placement: 'left',
+  { view: 'settings', settingsTab: 'common', target: '#card-ai-engine', placement: 'left',
     title: '⑧ AI API 키 설정',
     body: 'AI 초안 기능을 쓰려면 여기서 제공사를 선택하고 API 키를 저장하세요.<br>이 안내는 <b>설정 → 튜토리얼 다시 보기</b>로 언제든 다시 볼 수 있습니다.' },
 ];
@@ -1425,6 +1453,8 @@ function tourShow(idx, dir = 1) {
   if (state.view !== step.view || (step.sub && state.sub[step.view] !== step.sub)) {
     switchView(step.view, step.sub);
   }
+  // 설정 탭 뒤에 숨은 타깃 방지 — 사용자가 다른 탭을 보던 상태여도 강제 전환
+  if (step.settingsTab) showSettingsTab(step.settingsTab);
   setTimeout(() => tourPaint(idx, dir), 80);   // 뷰 전환 페인트 대기
 }
 
@@ -1834,6 +1864,20 @@ async function init() {
     _minutesComposeInited = true;   // 명시적 리셋이므로 lazy-init 중복 방지
     initMinutesView();
     switchView('minutes', 'compose');
+  });
+  // 설정 탭 (data-stab — 견적 필터 탭과 별도 바인딩)
+  $$('#settings-tabs .tab').forEach(t =>
+    t.addEventListener('click', () => showSettingsTab(t.dataset.stab)));
+  // 설정 내 유형별 폴더 변경
+  $('#btn-s-quote-folder').addEventListener('click', async () => {
+    const r = await call('pick_doc_folder', 'quote');
+    if (r.ok) { state.folder = r.folder; renderSettings(); }
+    else if (!r.cancelled) toast(r.error || '폴더 선택 실패', 'err');
+  });
+  $('#btn-s-minutes-folder').addEventListener('click', async () => {
+    const r = await call('pick_doc_folder', 'minutes');
+    if (r.ok) { state.minutesFolder = r.folder; renderSettings(); }
+    else if (!r.cancelled) toast(r.error || '폴더 선택 실패', 'err');
   });
   // 새 견적 (분할 버튼)
   $('#btn-new-quote').addEventListener('click', () => newQuote(false));

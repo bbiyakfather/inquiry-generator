@@ -303,72 +303,18 @@
       <header class="topbar">
         <div class="crumb"><span class="crumb-dim">내비온</span> <span class="crumb-sep">›</span> <b>설정</b></div>
       </header>
+      <!-- 설정 탭: 공통(전역) | 견적서 | 회의록 — 카드 id는 전부 보존(이동만) -->
+      <div class="tabs settings-tabs" id="settings-tabs">
+        <button class="tab active" data-stab="common">공통</button>
+        <button class="tab" data-stab="quote">견적서</button>
+        <button class="tab" data-stab="minutes">회의록</button>
+      </div>
+
+      <!-- ── 공통 탭: AI·Drive·진단·안내 ── -->
+      <div id="stab-common" class="settings-tab-panel">
       <div class="settings-layout">
 
        <div class="settings-col">
-        <div class="card form-card">
-          <h3>학술용역 인건비 단가표 <span class="h-sub">기획재정부 학술연구용역 인건비 기준단가(월)</span></h3>
-          <div class="inline-row">
-            <label>적용 연도
-              <select id="s-price-year"></select>
-            </label>
-            <button id="btn-add-year" class="btn btn-mini">＋ 연도 추가</button>
-          </div>
-          <table class="input-table" id="price-table">
-            <thead><tr><th>직급</th><th>단가(원/월)</th></tr></thead>
-            <tbody></tbody>
-          </table>
-          <button id="btn-save-prices" class="btn btn-outline">단가표 저장</button>
-        </div>
-
-        <div class="card form-card">
-          <h3>인건비 자동조정 <span class="h-sub">직급별 최대 인원 (목표금액 맞출 때 보조원 등 명수 한도)</span></h3>
-          <div class="form-grid" id="maxcnt-grid"></div>
-          <p class="hint">※ 책임연구원은 규칙상 항상 1명으로 고정됩니다(참여율 10%). 보조원 명수가 이 한도까지 탄력 운영됩니다.</p>
-          <button id="btn-save-maxcnt" class="btn btn-outline">최대 인원 저장</button>
-        </div>
-
-        <div class="card form-card">
-          <h3>공급자 정보 <span class="h-sub">견적서 양식의 고정 정보 (양식 자체는 템플릿에 보존)</span></h3>
-          <div class="form-grid" id="company-grid"></div>
-          <button id="btn-save-company" class="btn btn-outline">공급자 정보 저장</button>
-          <p class="hint">※ 공급자 표 내용을 실제로 바꾸려면 templates/견적서_템플릿.hwp를 한글에서 직접 수정하세요. 이 정보는 참고용입니다.</p>
-        </div>
-       </div>
-
-       <div class="settings-col">
-        <div class="card form-card">
-          <h3>HWP 템플릿 <span class="h-sub">견적서 서식 파일</span></h3>
-          <div class="inline-row" style="align-items:center;gap:8px;flex-wrap:wrap">
-            <span id="tpl-name" class="folder-path" style="flex:1;min-width:0">기본 템플릿 (내장)</span>
-            <button id="btn-pick-tpl" class="btn btn-ghost">파일 선택</button>
-            <button id="btn-scan-tpl" class="btn btn-outline" disabled>분석·적용</button>
-          </div>
-          <div id="tpl-status" class="h-sub" style="margin-top:6px"></div>
-          <div id="tpl-scan-result" class="hidden" style="margin-top:10px">
-            <table class="tpl-map-table">
-              <thead><tr><th>템플릿 필드</th><th>→ 표준 슬롯</th></tr></thead>
-              <tbody id="tpl-map-body"></tbody>
-            </table>
-            <div id="tpl-unmapped" class="h-sub" style="margin-top:6px"></div>
-          </div>
-        </div>
-
-        <div class="card form-card diag-card">
-          <h3>진단 <span class="h-sub">환경·연결 상태 점검</span></h3>
-          <div class="inline-row">
-            <button id="btn-diag" class="btn btn-outline">환경 점검</button>
-            <button id="btn-diag-hwp" class="btn btn-ghost">한글 구동 테스트 (느림)</button>
-          </div>
-        </div>
-
-        <div class="card form-card">
-          <h3>사용 안내 <span class="h-sub">핵심 기능 둘러보기</span></h3>
-          <div class="inline-row">
-            <button id="btn-tutorial-replay" class="btn btn-outline">▶ 튜토리얼 다시 보기</button>
-          </div>
-        </div>
-
         <div class="card form-card" id="card-ai-engine">
           <h3>AI 엔진 <span class="h-sub">제공사·모델 선택 (각 키는 따로 저장)</span></h3>
           <div class="form-grid">
@@ -425,7 +371,119 @@
         </div>
        </div>
 
+       <div class="settings-col">
+        <div class="card form-card diag-card">
+          <h3>진단 <span class="h-sub">환경·연결 상태 점검</span></h3>
+          <div class="inline-row">
+            <button id="btn-diag" class="btn btn-outline">환경 점검</button>
+            <button id="btn-diag-hwp" class="btn btn-ghost">한글 구동 테스트 (느림)</button>
+          </div>
+        </div>
+
+        <div class="card form-card">
+          <h3>사용 안내 <span class="h-sub">핵심 기능 둘러보기</span></h3>
+          <div class="inline-row">
+            <button id="btn-tutorial-replay" class="btn btn-outline">▶ 튜토리얼 다시 보기</button>
+          </div>
+        </div>
+       </div>
+
       </div>
+      </div><!-- /#stab-common -->
+
+      <!-- ── 견적서 탭: 단가·인원·공급자·템플릿·폴더 ── -->
+      <div id="stab-quote" class="settings-tab-panel hidden">
+      <div class="settings-layout">
+
+       <div class="settings-col">
+        <div class="card form-card">
+          <h3>학술용역 인건비 단가표 <span class="h-sub">기획재정부 학술연구용역 인건비 기준단가(월)</span></h3>
+          <div class="inline-row">
+            <label>적용 연도
+              <select id="s-price-year"></select>
+            </label>
+            <button id="btn-add-year" class="btn btn-mini">＋ 연도 추가</button>
+          </div>
+          <table class="input-table" id="price-table">
+            <thead><tr><th>직급</th><th>단가(원/월)</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <button id="btn-save-prices" class="btn btn-outline">단가표 저장</button>
+        </div>
+
+        <div class="card form-card">
+          <h3>인건비 자동조정 <span class="h-sub">직급별 최대 인원 (목표금액 맞출 때 보조원 등 명수 한도)</span></h3>
+          <div class="form-grid" id="maxcnt-grid"></div>
+          <p class="hint">※ 책임연구원은 규칙상 항상 1명으로 고정됩니다(참여율 10%). 보조원 명수가 이 한도까지 탄력 운영됩니다.</p>
+          <button id="btn-save-maxcnt" class="btn btn-outline">최대 인원 저장</button>
+        </div>
+       </div>
+
+       <div class="settings-col">
+        <div class="card form-card">
+          <h3>견적서 작업 폴더 <span class="h-sub">견적서 스캔·저장 위치</span></h3>
+          <div class="inline-row" style="align-items:center;gap:8px">
+            <span id="s-quote-folder-path" class="folder-path" style="flex:1;min-width:0">폴더 미지정</span>
+            <button id="btn-s-quote-folder" class="btn btn-ghost">변경</button>
+          </div>
+        </div>
+
+        <div class="card form-card">
+          <h3>공급자 정보 <span class="h-sub">견적서 양식의 고정 정보 (양식 자체는 템플릿에 보존)</span></h3>
+          <div class="form-grid" id="company-grid"></div>
+          <button id="btn-save-company" class="btn btn-outline">공급자 정보 저장</button>
+          <p class="hint">※ 공급자 표 내용을 실제로 바꾸려면 templates/견적서_템플릿.hwp를 한글에서 직접 수정하세요. 이 정보는 참고용입니다.</p>
+        </div>
+
+        <div class="card form-card">
+          <h3>HWP 템플릿 <span class="h-sub">견적서 서식 파일</span></h3>
+          <div class="inline-row" style="align-items:center;gap:8px;flex-wrap:wrap">
+            <span id="tpl-name" class="folder-path" style="flex:1;min-width:0">기본 템플릿 (내장)</span>
+            <button id="btn-pick-tpl" class="btn btn-ghost">파일 선택</button>
+            <button id="btn-scan-tpl" class="btn btn-outline" disabled>분석·적용</button>
+          </div>
+          <div id="tpl-status" class="h-sub" style="margin-top:6px"></div>
+          <div id="tpl-scan-result" class="hidden" style="margin-top:10px">
+            <table class="tpl-map-table">
+              <thead><tr><th>템플릿 필드</th><th>→ 표준 슬롯</th></tr></thead>
+              <tbody id="tpl-map-body"></tbody>
+            </table>
+            <div id="tpl-unmapped" class="h-sub" style="margin-top:6px"></div>
+          </div>
+        </div>
+       </div>
+
+      </div>
+      </div><!-- /#stab-quote -->
+
+      <!-- ── 회의록 탭: 폴더·양식 ── -->
+      <div id="stab-minutes" class="settings-tab-panel hidden">
+      <div class="settings-layout">
+
+       <div class="settings-col">
+        <div class="card form-card">
+          <h3>회의록 작업 폴더 <span class="h-sub">회의록 스캔·저장 위치 (견적서와 별도)</span></h3>
+          <div class="inline-row" style="align-items:center;gap:8px">
+            <span id="s-minutes-folder-path" class="folder-path" style="flex:1;min-width:0">폴더 미지정</span>
+            <button id="btn-s-minutes-folder" class="btn btn-ghost">변경</button>
+          </div>
+          <p class="hint">※ 미지정 시 견적서 폴더를 함께 사용합니다.</p>
+        </div>
+       </div>
+
+       <div class="settings-col">
+        <div class="card form-card">
+          <h3>회의록 양식 <span class="h-sub">HWPX 템플릿 (내장, 읽기 전용)</span></h3>
+          <div class="inline-row" style="align-items:center;gap:8px">
+            <span id="mn-tpl-name" class="folder-path" style="flex:1;min-width:0">확인 중...</span>
+            <span id="mn-tpl-status" class="h-sub"></span>
+          </div>
+          <p class="hint">※ 7행 표 양식([내비온] 회의록 양식). 양식 수정이 필요하면 templates/회의록_양식.hwpx를 교체하세요.</p>
+        </div>
+       </div>
+
+      </div>
+      </div><!-- /#stab-minutes -->
     </section>
   </main>
 </div>
