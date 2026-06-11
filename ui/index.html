@@ -8,15 +8,13 @@
 <body>
 <div id="app">
 
-  <!-- ===== 좌측 아이콘 사이드바 ===== -->
+  <!-- ===== 좌측 아이콘 사이드바 — 아이콘 = 문서 유형 (허브) =====
+       새 문서 유형 추가: 버튼 1개 + #hub-<type> 섹션 + app.js DOC_TYPES + config doc_types -->
   <aside class="sidebar">
-    <div class="brand" title="내비온 견적서 생성기">N</div>
+    <div class="brand" title="내비온 업무 문서 생성기">N</div>
     <nav>
-      <button class="nav-btn active" data-view="dashboard" title="대시보드">
-        <svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z"/></svg>
-      </button>
-      <button class="nav-btn" data-view="editor" title="새 견적서">
-        <svg viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M12 12v6M9 15h6"/></svg>
+      <button class="nav-btn active" data-view="quote" title="견적서">
+        <svg viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M9 13h6M9 17h4"/></svg>
       </button>
       <button class="nav-btn" data-view="minutes" title="회의록">
         <svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
@@ -30,10 +28,17 @@
   <!-- ===== 메인 영역 ===== -->
   <main class="main">
 
-    <!-- ===== 대시보드 ===== -->
-    <section id="view-dashboard" class="view active">
+    <!-- ===== 견적서 허브 (대시보드 | 편집기) ===== -->
+    <section id="hub-quote" class="view active">
+      <div class="sub-nav">
+        <button class="sub-tab active" data-sub="dashboard">대시보드</button>
+        <button class="sub-tab" data-sub="editor">편집기</button>
+      </div>
+
+      <!-- ── 대시보드 ── -->
+      <div id="view-dashboard" class="subview active">
       <header class="topbar">
-        <div class="crumb"><span class="crumb-dim">견적서 관리</span> <span class="crumb-sep">›</span> <b>대시보드</b></div>
+        <div class="crumb"><span class="crumb-dim">견적서</span> <span class="crumb-sep">›</span> <b>대시보드</b></div>
         <div class="topbar-right">
           <div class="search-box">
             <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
@@ -80,12 +85,12 @@
         <div class="empty-emoji">🗂️</div>
         <p>표시할 견적서가 없습니다.<br>폴더를 선택하거나 새 견적서를 만들어 보세요.</p>
       </div>
-    </section>
+      </div><!-- /#view-dashboard -->
 
-    <!-- ===== 편집기 ===== -->
-    <section id="view-editor" class="view">
+      <!-- ── 편집기 ── -->
+      <div id="view-editor" class="subview">
       <header class="topbar">
-        <div class="crumb"><span class="crumb-dim">견적서 관리</span> <span class="crumb-sep">›</span> <b id="editor-title">새 견적서</b></div>
+        <div class="crumb"><span class="crumb-dim">견적서</span> <span class="crumb-sep">›</span> <b id="editor-title">새 견적서</b></div>
         <div class="topbar-right">
           <button id="btn-ai-open" class="btn btn-violet">✦ AI 초안</button>
           <button id="btn-save-json" class="btn btn-ghost">임시 저장</button>
@@ -164,12 +169,58 @@
           </div>
         </div>
       </div>
-    </section>
+      </div><!-- /#view-editor -->
+    </section><!-- /#hub-quote -->
 
-    <!-- ===== 회의록 ===== -->
-    <section id="view-minutes" class="view">
+    <!-- ===== 회의록 허브 (대시보드 | 작성) ===== -->
+    <section id="hub-minutes" class="view">
+      <div class="sub-nav">
+        <button class="sub-tab active" data-sub="dashboard">대시보드</button>
+        <button class="sub-tab" data-sub="compose">작성</button>
+      </div>
+
+      <!-- ── 회의록 대시보드 ── -->
+      <div id="view-minutes-dashboard" class="subview active">
+        <header class="topbar">
+          <div class="crumb"><span class="crumb-dim">회의록</span> <span class="crumb-sep">›</span> <b>대시보드</b></div>
+          <div class="topbar-right">
+            <div class="search-box">
+              <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+              <input id="mnd-search" type="text" placeholder="주제·사업명·장소 검색">
+            </div>
+            <div class="profile-chip">
+              <div class="avatar">N</div>
+              <div><div class="p-name">내비온</div><div class="p-sub">회의록 관리</div></div>
+            </div>
+          </div>
+        </header>
+
+        <div class="folder-bar card">
+          <svg viewBox="0 0 24 24" class="folder-ico"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span id="mnd-folder-path" class="folder-path">폴더를 선택하세요</span>
+          <button id="btn-mnd-pick-folder" class="btn btn-ghost">폴더 선택</button>
+          <button id="btn-mnd-rescan" class="btn btn-ghost">새로고침</button>
+          <div class="spacer"></div>
+          <button id="btn-new-minutes" class="btn btn-primary">＋ 새 회의록</button>
+        </div>
+
+        <div class="stat-row stat-row-3">
+          <div class="card stat"><div class="stat-ico blue">📋</div><div><div class="stat-label">전체 회의록</div><div class="stat-num"><span id="mst-total">0</span><span class="stat-unit">건</span></div></div></div>
+          <div class="card stat"><div class="stat-ico green">🗓️</div><div><div class="stat-label">이번 달</div><div class="stat-num"><span id="mst-month">0</span><span class="stat-unit">건</span></div></div></div>
+          <div class="card stat"><div class="stat-ico orange">✏️</div><div><div class="stat-label">재편집 가능</div><div class="stat-num"><span id="mst-editable">0</span><span class="stat-unit">건</span></div></div></div>
+        </div>
+
+        <div id="minutes-grid" class="grid"></div>
+        <div id="mnd-empty" class="empty hidden">
+          <div class="empty-emoji">📋</div>
+          <p>표시할 회의록이 없습니다.<br>폴더를 선택하거나 새 회의록을 만들어 보세요.</p>
+        </div>
+      </div><!-- /#view-minutes-dashboard -->
+
+      <!-- ── 작성 위저드 ── -->
+      <div id="view-minutes" class="subview">
       <header class="topbar">
-        <div class="crumb"><span class="crumb-dim">내비온</span> <span class="crumb-sep">›</span> <b>회의록 생성</b></div>
+        <div class="crumb"><span class="crumb-dim">회의록</span> <span class="crumb-sep">›</span> <b>작성</b></div>
         <div class="topbar-right">
           <span id="mn-step-indicator" class="h-sub">1단계: 회의 내용 입력</span>
         </div>
@@ -244,12 +295,13 @@
           <button id="mn-r-gen" class="btn btn-primary btn-wide" type="button">회의록 HWPX 생성 →</button>
         </div>
       </div>
-    </section>
+      </div><!-- /#view-minutes -->
+    </section><!-- /#hub-minutes -->
 
     <!-- ===== 설정 ===== -->
     <section id="view-settings" class="view">
       <header class="topbar">
-        <div class="crumb"><span class="crumb-dim">견적서 관리</span> <span class="crumb-sep">›</span> <b>설정</b></div>
+        <div class="crumb"><span class="crumb-dim">내비온</span> <span class="crumb-sep">›</span> <b>설정</b></div>
       </header>
       <div class="settings-layout">
 
@@ -466,7 +518,7 @@
 <!-- ===== 삭제 확인 모달 ===== -->
 <div id="del-modal" class="modal-back hidden">
   <div class="modal card">
-    <h3>견적서 삭제</h3>
+    <h3 id="del-title">견적서 삭제</h3>
     <p class="hint" id="del-target">선택한 견적서를 삭제합니다.</p>
     <label class="chk" style="margin:6px 0"><input id="del-files" type="checkbox"> 폴더에 있는 실제 파일(.hwp/.pdf)도 함께 삭제</label>
     <p class="hint" id="del-files-note">체크하지 않으면 목록에서만 제거되고(재편집 데이터 .quote.json만 삭제) 실제 한글/PDF 파일은 폴더에 남습니다.</p>

@@ -9,15 +9,43 @@ const COMPANY_FIELDS = [
 ];
 
 const state = {
-  view: 'dashboard',
+  view: 'quote',                                    // 'quote' | 'minutes' | 'settings'
+  sub: { quote: 'dashboard', minutes: 'dashboard' }, // 허브별 현재 서브탭
   config: null,
-  folder: '',
+  folder: '',          // 견적서 작업 폴더 (doc_types.quote)
+  minutesFolder: '',   // 회의록 작업 폴더 (doc_types.minutes)
   quotes: [],
+  minutes: [],         // 회의록 대시보드 스캔 결과
   filter: 'all',
   search: '',
+  mnSearch: '',        // 회의록 대시보드 검색어
   quote: null,        // 현재 편집 중 견적 (정규 payload 형태)
   lastDisplay: null,
 };
+
+/* ---------- 문서 유형 레지스트리 ----------
+   새 문서 유형 추가 절차 (4곳):
+   ① 여기 DOC_TYPES에 항목  ② index.html 사이드바 버튼 + #hub-<type> 섹션
+   ③ src/store/config_store.py DEFAULT_CONFIG["doc_types"]에 키
+   ④ 백엔드 scan/store 모듈 (scan_folder류 API)                       */
+const DOC_TYPES = {
+  quote: {
+    label: '견적서', hub: 'hub-quote', defaultSub: 'dashboard',
+    subs: {
+      dashboard: { panel: 'view-dashboard', label: '대시보드', init: () => refreshDashboard() },
+      editor:    { panel: 'view-editor',    label: '편집기',   init: () => ensureEditorQuote() },
+    },
+  },
+  minutes: {
+    label: '회의록', hub: 'hub-minutes', defaultSub: 'dashboard',
+    subs: {
+      dashboard: { panel: 'view-minutes-dashboard', label: '대시보드', init: () => refreshMinutesDashboard() },
+      compose:   { panel: 'view-minutes',           label: '작성',     init: () => initMinutesComposeLazy() },
+    },
+  },
+};
+// 구 뷰 토큰 호환 — 투어·기존 switchView 호출부의 이중 안전망
+const VIEW_ALIASES = { dashboard: ['quote', 'dashboard'], editor: ['quote', 'editor'] };
 
 /* ---------- 유틸 ---------- */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -66,14 +94,42 @@ async function call(method, ...args) {
   }
 }
 
-/* ---------- 네비게이션 ---------- */
-function switchView(view) {
+/* ---------- 네비게이션 (허브 + 서브탭) ---------- */
+function switchView(view, sub) {
+  if (VIEW_ALIASES[view]) {
+    const [v, s] = VIEW_ALIASES[view];
+    sub = sub || s;
+    view = v;
+  }
   state.view = view;
+  const dt = DOC_TYPES[view];
+  if (dt) {
+    sub = sub || state.sub[view] || dt.defaultSub;
+    state.sub[view] = sub;
+  }
   $$('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === view));
-  $$('.view').forEach(v => v.classList.toggle('active', v.id === `view-${view}`));
-  if (view === 'dashboard') refreshDashboard();
+  const activeId = dt ? dt.hub : `view-${view}`;   // settings = view-settings
+  $$('.view').forEach(v => v.classList.toggle('active', v.id === activeId));
+  if (dt) {
+    $$(`#${dt.hub} .sub-tab`).forEach(t => t.classList.toggle('active', t.dataset.sub === sub));
+    $$(`#${dt.hub} .subview`).forEach(p => p.classList.toggle('active', p.id === dt.subs[sub].panel));
+    dt.subs[sub].init();
+  }
   if (view === 'settings') renderSettings();
-  if (view === 'minutes') initMinutesView();
+}
+
+/* 편집기 직행 시 견적이 없으면 새 견적 생성 (사이드바→편집기 크래시 방지) */
+function ensureEditorQuote() {
+  if (!state.quote) newQuote(false);
+}
+
+/* 회의록 작성: 최초 1회만 리셋 — 이후 탭 왕복 시 위저드 상태 보존(재편집 전제).
+   명시적 리셋은 "＋ 새 회의록" 버튼이 담당. */
+let _minutesComposeInited = false;
+function initMinutesComposeLazy() {
+  if (_minutesComposeInited) return;
+  _minutesComposeInited = true;
+  initMinutesView();
 }
 
 /* ===================================================================
@@ -1291,29 +1347,32 @@ async function scanTemplate() {
    튜토리얼 (코치마크 투어)
 =================================================================== */
 const TOUR_STEPS = [
-  { view: 'dashboard', target: null, placement: 'center',
+  { view: 'quote', sub: 'dashboard', target: null, placement: 'center',
     title: '환영합니다! 👋',
-    body: '내비온 견적서 생성기의 핵심 기능을 1분 만에 안내해 드립니다.<br>ESC 키를 누르면 언제든 종료할 수 있습니다.' },
-  { view: 'dashboard', target: '#btn-pick-folder', placement: 'bottom',
+    body: '내비온 업무 문서 생성기의 핵심 기능을 1분 만에 안내해 드립니다.<br>좌측 아이콘이 문서 유형(견적서·회의록)입니다. ESC 키를 누르면 언제든 종료할 수 있습니다.' },
+  { view: 'quote', sub: 'dashboard', target: '#btn-pick-folder', placement: 'bottom',
     title: '① 작업 폴더 선택',
-    body: '견적서를 저장하고 불러올 폴더를 먼저 선택하세요. 폴더 안의 기존 견적 파일도 자동으로 목록에 표시됩니다.' },
-  { view: 'dashboard', target: '.split-btn', placement: 'bottom',
+    body: '견적서를 저장하고 불러올 폴더를 먼저 선택하세요. 폴더 안의 기존 견적 파일도 자동으로 목록에 표시됩니다. (회의록 폴더는 회의록 대시보드에서 따로 지정)' },
+  { view: 'quote', sub: 'dashboard', target: '.split-btn', placement: 'bottom',
     title: '② 새 견적서 만들기',
     body: '직접 작성하거나, ▾를 눌러 <b>✦ AI 초안</b>으로 시작할 수 있습니다. 과업지시서를 붙여넣으면 AI가 인력·경비 구성을 제안합니다.' },
-  { view: 'editor', target: '#btn-ai-open', placement: 'bottom',
+  { view: 'quote', sub: 'editor', target: '#btn-ai-open', placement: 'bottom',
     title: '③ AI 초안',
     body: '편집 중에도 언제든 AI 초안을 불러와 인건비·경비 구성을 다시 제안받을 수 있습니다. (설정에서 AI API 키 필요)' },
-  { view: 'editor', target: '.goal-row', placement: 'bottom',
+  { view: 'quote', sub: 'editor', target: '.goal-row', placement: 'bottom',
     title: '④ 목표금액 자동 맞춤',
     body: '목표금액(부가세 포함)을 입력하고 <b>⚖ 인건비 자동조정</b>을 누르면 참여율·명수를 자동 계산해 최종 견적이 목표금액과 정확히 일치합니다. 만원 미만 잔액은 "만원미만 절삭"으로 처리됩니다.' },
-  { view: 'editor', target: '#labor-table', placement: 'bottom',
+  { view: 'quote', sub: 'editor', target: '#labor-table', placement: 'bottom',
     title: '⑤ 🔒 값 고정',
     body: '특정 직급의 명수·참여율을 그대로 유지하고 싶으면 맨 오른쪽 <b>🔒고정</b>을 체크하세요. 자동조정 시 그 행은 건드리지 않습니다.' },
-  { view: 'editor', target: '#view-editor .topbar-right', placement: 'bottom',
+  { view: 'quote', sub: 'editor', target: '#view-editor .topbar-right', placement: 'bottom',
     title: '⑥ HWP 생성',
     body: '작성이 끝나면 <b>HWP 생성</b> 또는 <b>HWP + PDF</b>를 누르세요. 한글(HWP)이 자동 실행되어 회사 양식 그대로 견적서가 완성됩니다.' },
+  { view: 'minutes', sub: 'dashboard', target: '#btn-new-minutes', placement: 'bottom',
+    title: '⑦ 회의록',
+    body: '회의 메모·녹음 전사본으로 AI가 회의록 초안을 만들고 HWPX로 생성합니다. 생성된 회의록은 이 대시보드에서 관리·재편집할 수 있습니다.' },
   { view: 'settings', target: '#card-ai-engine', placement: 'left',
-    title: '⑦ AI API 키 설정',
+    title: '⑧ AI API 키 설정',
     body: 'AI 초안 기능을 쓰려면 여기서 제공사를 선택하고 API 키를 저장하세요.<br>이 안내는 <b>설정 → 튜토리얼 다시 보기</b>로 언제든 다시 볼 수 있습니다.' },
 ];
 let _tour = { active: false, idx: 0 };
@@ -1334,7 +1393,7 @@ function endTour(markSeen = true) {
   $('#tour').classList.add('hidden');
   document.removeEventListener('keydown', tourKeydown);
   window.removeEventListener('resize', tourResize);
-  if (state.view !== 'dashboard') switchView('dashboard');
+  switchView('quote', 'dashboard');
   if (markSeen) {
     if (state.config) state.config.tutorial_seen = true;
     call('set_tutorial_seen', true);     // 저장 실패해도 투어는 닫힘(다음 실행 때 재노출)
@@ -1352,7 +1411,9 @@ function tourShow(idx, dir = 1) {
   if (idx < 0) idx = 0;
   _tour.idx = idx;
   const step = TOUR_STEPS[idx];
-  if (state.view !== step.view) switchView(step.view);
+  if (state.view !== step.view || (step.sub && state.sub[step.view] !== step.sub)) {
+    switchView(step.view, step.sub);
+  }
   setTimeout(() => tourPaint(idx, dir), 80);   // 뷰 전환 페인트 대기
 }
 
@@ -1403,6 +1464,13 @@ function tourPlaceCard(rect, placement) {
   }
   card.style.left = Math.max(gap, Math.min(left, innerWidth - cw - gap)) + 'px';
   card.style.top = Math.max(gap, Math.min(top, innerHeight - ch - gap)) + 'px';
+}
+
+/* ===================================================================
+   회의록 대시보드
+=================================================================== */
+async function refreshMinutesDashboard() {
+  /* M14에서 구현 — M13 셸 단계 stub */
 }
 
 /* ===================================================================
@@ -1631,11 +1699,16 @@ async function init() {
   const r = await call('get_config');
   if (r.ok) state.config = r.config;
 
-  // 네비
+  // 네비 (사이드바 = 문서 유형 허브)
   $$('.nav-btn').forEach(b => b.addEventListener('click', () => switchView(b.dataset.view)));
-  // 탭
-  $$('.tab').forEach(t => t.addEventListener('click', () => {
-    $$('.tab').forEach(x => x.classList.toggle('active', x === t));
+  // 허브 서브탭
+  $$('.sub-nav .sub-tab').forEach(t => t.addEventListener('click', () => {
+    const hub = t.closest('.view');
+    if (hub) switchView(hub.id.replace('hub-', ''), t.dataset.sub);
+  }));
+  // 견적 필터 탭 — 반드시 #view-dashboard로 스코프 한정 (설정 탭·서브탭과 충돌 방지)
+  $$('#view-dashboard .tab').forEach(t => t.addEventListener('click', () => {
+    $$('#view-dashboard .tab').forEach(x => x.classList.toggle('active', x === t));
     state.filter = t.dataset.tab; renderGrid();
   }));
   // 검색
@@ -1757,8 +1830,10 @@ async function init() {
   $('#tour-skip').addEventListener('click', () => endTour(true));
   $('#btn-tutorial-replay').addEventListener('click', startTour);
 
-  // 초기 화면
-  if (state.config && state.config.last_folder) state.folder = state.config.last_folder;
+  // 초기 화면 — 유형별 폴더 시딩 (doc_folders는 백엔드가 폴백 적용한 실효값)
+  const df = (state.config && state.config.doc_folders) || {};
+  state.folder = df.quote || (state.config && state.config.last_folder) || '';
+  state.minutesFolder = df.minutes || '';
   refreshDashboard();
 
   // 최초 실행 시 튜토리얼 자동 시작 (=== false: config 미로딩 폴백에선 미작동)
