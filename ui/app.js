@@ -1202,35 +1202,46 @@ async function runHwpTest() {
 }
 
 /* ===================================================================
-   견적 삭제 (파일 삭제는 별도 확인)
+   문서 삭제 — 견적서·회의록 공용 모달 (kind로 분기, 파일 삭제는 별도 확인)
 =================================================================== */
-let _delTarget = null;
-function openDeleteModal(q) {
-  _delTarget = q;
-  $('#del-target').textContent = `"${q.service_name || q.filename}" 견적서를 삭제합니다.`;
+let _delTarget = null;   // { kind: 'quote' | 'minutes', item }
+function openDeleteModal(item, kind = 'quote') {
+  _delTarget = { kind, item };
   $('#del-files').checked = false;
   const note = $('#del-files-note');
-  if (q.source === 'hwp' && !q.editable) {
-    note.textContent = '외부 HWP라 재편집 데이터가 없습니다. 폴더의 파일을 지우려면 위 항목을 체크하세요(체크 안 하면 변화 없음).';
+  if (kind === 'minutes') {
+    $('#del-title').textContent = '회의록 삭제';
+    $('#del-target').textContent = `"${item.topic || item.filename}" 회의록을 삭제합니다.`;
+    $('#del-files-label').textContent = '폴더에 있는 실제 파일(.hwpx)도 함께 삭제';
+    note.textContent = item.editable
+      ? '체크하지 않으면 목록에서만 제거되고(재편집 데이터 .minutes.json만 삭제) 실제 회의록 파일은 폴더에 남습니다.'
+      : '외부 HWPX라 재편집 데이터가 없습니다. 폴더의 파일을 지우려면 위 항목을 체크하세요(체크 안 하면 변화 없음).';
   } else {
-    note.textContent = "체크하지 않으면 목록에서만 제거되고(.quote.json만 삭제) 실제 한글/PDF 파일은 폴더에 남습니다.";
+    $('#del-title').textContent = '견적서 삭제';
+    $('#del-target').textContent = `"${item.service_name || item.filename}" 견적서를 삭제합니다.`;
+    $('#del-files-label').textContent = '폴더에 있는 실제 파일(.hwp/.pdf)도 함께 삭제';
+    note.textContent = (item.source === 'hwp' && !item.editable)
+      ? '외부 HWP라 재편집 데이터가 없습니다. 폴더의 파일을 지우려면 위 항목을 체크하세요(체크 안 하면 변화 없음).'
+      : '체크하지 않으면 목록에서만 제거되고(.quote.json만 삭제) 실제 한글/PDF 파일은 폴더에 남습니다.';
   }
   $('#del-modal').classList.remove('hidden');
 }
 function closeDeleteModal() { $('#del-modal').classList.add('hidden'); _delTarget = null; }
 async function confirmDelete() {
   if (!_delTarget) return;
-  const q = _delTarget;
+  const { kind, item } = _delTarget;
   const alsoFiles = $('#del-files').checked;
   $('#del-modal').classList.add('hidden');
   _delTarget = null;
   overlay(true, '삭제 중...');
-  const r = await call('delete_quote', {
-    path: q.path, json_path: q.json_path, source: q.source, also_files: alsoFiles,
+  const r = await call(kind === 'minutes' ? 'delete_minutes' : 'delete_quote', {
+    path: item.path, json_path: item.json_path, source: item.source, also_files: alsoFiles,
   });
   overlay(false);
-  if (r.ok) { toast(`삭제 완료 (${(r.removed || []).join(', ') || '항목'})`, 'ok'); refreshDashboard(); }
-  else toast(r.error || '삭제 실패', 'err', 5000);
+  if (r.ok) {
+    toast(`삭제 완료 (${(r.removed || []).join(', ') || '항목'})`, 'ok');
+    if (kind === 'minutes') refreshMinutesDashboard(); else refreshDashboard();
+  } else toast(r.error || '삭제 실패', 'err', 5000);
 }
 
 /* ===================================================================
@@ -1470,7 +1481,96 @@ function tourPlaceCard(rect, placement) {
    회의록 대시보드
 =================================================================== */
 async function refreshMinutesDashboard() {
-  /* M14에서 구현 — M13 셸 단계 stub */
+  const r = await call('scan_minutes_folder', state.minutesFolder || null);
+  if (!r.ok) { toast(r.error || '회의록 폴더 스캔 실패', 'err'); return; }
+  state.minutesFolder = r.folder || '';
+  state.minutes = r.minutes || [];
+  $('#mnd-folder-path').textContent = state.minutesFolder || '폴더를 선택하세요';
+  $('#mnd-folder-path').title = state.minutesFolder || '';
+  renderMinutesStats(r.stats);
+  renderMinutesGrid();
+}
+
+function renderMinutesStats(s) {
+  s = s || {};
+  $('#mst-total').textContent = s.total ?? 0;
+  $('#mst-month').textContent = s.this_month ?? 0;
+  $('#mst-editable').textContent = s.editable ?? 0;
+}
+
+function filteredMinutes() {
+  let list = state.minutes;
+  const kw = state.mnSearch.trim().toLowerCase();
+  if (kw) {
+    list = list.filter(m =>
+      (m.topic || '').toLowerCase().includes(kw) ||
+      (m.business_name || '').toLowerCase().includes(kw) ||
+      (m.place || '').toLowerCase().includes(kw));
+  }
+  return list;
+}
+
+function renderMinutesGrid() {
+  const grid = $('#minutes-grid');
+  const list = filteredMinutes();
+  grid.innerHTML = '';
+  $('#mnd-empty').classList.toggle('hidden', list.length > 0);
+  for (const m of list) grid.appendChild(minutesCard(m));
+}
+
+function minutesCard(m) {
+  const c = el('div', 'qcard');
+  let badge;
+  if (m.source === 'json') badge = `<span class="badge json">재편집 데이터</span>`;
+  else if (m.editable) badge = `<span class="badge editable">재편집 가능</span>`;
+  else badge = `<span class="badge external">외부 HWPX</span>`;
+
+  c.innerHTML = `
+    <div class="qcard-top">
+      <div>
+        <div class="qcard-no" title="${esc(m.business_name)}">${esc(m.business_name || '사업명 미상')}</div>
+        <div class="qcard-title" title="${esc(m.topic)}">${esc(m.topic || '(주제 없음)')}</div>
+      </div>
+      ${badge}
+    </div>
+    <div class="qcard-meta">
+      <div class="qcard-row"><span class="k">일시</span><span class="v" title="${esc(m.date)}">${esc(m.date || '-')}</span></div>
+      <div class="qcard-row"><span class="k">장소</span><span class="v" title="${esc(m.place)}">${esc(m.place || '-')}</span></div>
+      <div class="qcard-row"><span class="k">참석</span><span class="v">${m.total_count ? esc(String(m.total_count)) + '명' : '-'}</span></div>
+      <div class="qcard-row"><span class="k">파일</span><span class="v" title="${esc(m.filename)}">${esc(m.filename)}</span></div>
+    </div>
+    <div class="qcard-actions"></div>`;
+
+  const actions = $('.qcard-actions', c);
+  if (m.source !== 'json') {
+    const open = el('button', 'btn btn-ghost', 'HWPX 열기');
+    open.onclick = () => call('open_file', m.path).then(r => { if (!r.ok) toast(r.error, 'err'); });
+    actions.appendChild(open);
+  }
+  if (m.editable && m.json_path) {
+    const edit = el('button', 'btn btn-outline', '재편집');
+    edit.onclick = () => reEditMinutes(m.json_path);
+    actions.appendChild(edit);
+  }
+  const del = el('button', 'qcard-del', '×');
+  del.title = '삭제';
+  del.setAttribute('aria-label', '회의록 삭제');
+  del.onclick = (ev) => { ev.stopPropagation(); openDeleteModal(m, 'minutes'); };
+  c.appendChild(del);
+  return c;
+}
+
+/* 사이드카 → 위저드 2단계 복원 (재편집) */
+async function reEditMinutes(jsonPath) {
+  overlay(true, '불러오는 중...');
+  const r = await call('load_minutes', jsonPath);
+  overlay(false);
+  if (!r.ok) { toast(r.error || '불러오기 실패', 'err'); return; }
+  _minutesComposeInited = true;   // lazy-init이 위저드를 리셋하지 않도록 선세트
+  minutesDraft = r.data;
+  renderMinutesReview(minutesDraft);
+  showMinutesStep(2);
+  switchView('minutes', 'compose');
 }
 
 /* ===================================================================
@@ -1672,7 +1772,7 @@ async function generateMinutes() {
   overlay(true, 'HWPX 생성 중...');
   const r = await call('generate_minutes', {
     data,
-    out_folder: state.folder || '',
+    out_folder: state.minutesFolder || '',   // 회의록 전용 폴더 (비면 백엔드 폴백)
   });
   overlay(false);
   if (!r.ok) {
@@ -1680,8 +1780,10 @@ async function generateMinutes() {
     if (box) { box.textContent = r.error || 'HWPX 생성 실패'; box.className = 'ai-status err'; }
     return;
   }
+  if (r.warning) toast(r.warning, 'warn', 5000);
   toast('회의록 HWPX 생성 완료! 파일을 엽니다.', 'ok', 4000);
   call('open_file', r.path);
+  refreshMinutesDashboard();   // 대시보드 목록 즉시 갱신
 }
 
 function initMinutesView() {
@@ -1720,6 +1822,19 @@ async function init() {
     else if (!r.cancelled) toast(r.error || '폴더 선택 실패', 'err');
   });
   $('#btn-rescan').addEventListener('click', refreshDashboard);
+  // 회의록 대시보드
+  $('#mnd-search').addEventListener('input', e => { state.mnSearch = e.target.value; renderMinutesGrid(); });
+  $('#btn-mnd-pick-folder').addEventListener('click', async () => {
+    const r = await call('pick_doc_folder', 'minutes');
+    if (r.ok) { state.minutesFolder = r.folder; refreshMinutesDashboard(); }
+    else if (!r.cancelled) toast(r.error || '폴더 선택 실패', 'err');
+  });
+  $('#btn-mnd-rescan').addEventListener('click', refreshMinutesDashboard);
+  $('#btn-new-minutes').addEventListener('click', () => {
+    _minutesComposeInited = true;   // 명시적 리셋이므로 lazy-init 중복 방지
+    initMinutesView();
+    switchView('minutes', 'compose');
+  });
   // 새 견적 (분할 버튼)
   $('#btn-new-quote').addEventListener('click', () => newQuote(false));
   $('#btn-new-dropdown').addEventListener('click', e => { e.stopPropagation(); $('#new-menu').classList.toggle('hidden'); });
