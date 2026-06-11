@@ -1,0 +1,43 @@
+# 교훈 기록 (Lessons Learned)
+
+## 2026-06-10: bat 더블클릭 시 무반응/창 깜빡임 — UTF-8 한글 bat이 CP949 cmd에서 파싱 즉사 (진범)
+- **발생**: `견적서생성기.bat` 더블클릭 → 콘솔이 떴다 바로 꺼지고 앱은 시작조차 안 됨.
+- **원인(확정)**: bat 파일을 **UTF-8(한글 포함)**로 저장했는데, 한국어 Windows cmd는
+  배치 파일을 **CP949로 해석**한다. UTF-8 한글 바이트가 CP949 2바이트 문자로 오독되며
+  **줄바꿈(\r\n)까지 집어삼켜** 명령줄이 엉뚱한 위치에서 잘림 — 실측 증거:
+  `'t.txt로' is not recognized as an internal or external command`.
+  줄머리 `chcp 65001`로도 **못 막는다**(이후 줄도 깨짐). 배치가 즉시 abort → "창 깜빡 후 무반응".
+- **방지책(철칙)**: **.bat/.cmd 파일 내용은 100% ASCII로만 작성**(한글 메시지·주석 금지,
+  한글은 파일명까지만 허용). 한글 안내가 필요하면 Python 쪽에서 출력.
+- **검증**: ASCII 재작성 후 Start-Process(더블클릭과 동일 경로)로 실행 →
+  콘솔 유지 + WebView2 자식 프로세스 +6 + `app-log.txt`에 "GUI 루프 진입" 기록.
+- **부진범(같이 고침)**: bare `python`은 탐색기 컨텍스트에서 0바이트 Store 스텁
+  (`WindowsApps\python.exe`)에 걸릴 수 있고, `py` 기본값(3.14)엔 deps가 없음 →
+  런처는 `py -3.12` 1순위, `%LOCALAPPDATA%\Programs\Python\Python312\python.exe` 폴백.
+- **상시 진단 장치**: `app.py`가 시작~종료 전 과정을 `app-log.txt`에 기록(치명 오류 traceback 포함).
+  `실행_디버그.bat`은 python/버전/deps 출력 후 앱 stdout을 `run-log.txt`로 수집.
+- **기타**: 종료 시 `window_impl.cc ... Failed to unregister class` 경고는 무해.
+  이 PC의 msedgewebview2 프로세스 ~18-30개는 타 앱 베이스라인 — 개수로 앱 기동 판단 금지(델타로 판단).
+
+## 2026-06-11: 클라이언트 PC 즉시 종료 — MOTW(다운로드 차단)가 .NET DLL 로드를 거부
+- **발생**: 카카오톡으로 받은 ZIP을 풀어 실행한 클라이언트 PC에서 앱 즉사.
+  팝업: `Failed to resolve Python.Runtime.Loader.Initialize from ..._internal\pythonnet\runtime\Python.Runtime.dll`.
+  같은 바이너리가 빌드 PC·로컬 dist에선 정상 — **실행 위치(Downloads)만 다름**.
+- **원인(확정)**: 브라우저/카카오톡 수신 ZIP → 탐색기 압축 해제 시 모든 파일에
+  `Zone.Identifier`(인터넷 존=3) NTFS 스트림 부착. .NET Framework는 인터넷 존
+  어셈블리를 기본 거부(0x80131515) → pythonnet의 `Assembly.LoadFrom` 실패 →
+  pywebview가 `import clr` 하는 순간 사망. PyInstaller 부트로더와 python3xx.dll은
+  Win32 LoadLibrary 경유라 MOTW 무시 → "Api 초기화 완료"까지는 정상 진행되는 함정.
+- **방지책(이중 방어, 2026-06-11 적용)**:
+  ① `내비온 견적서 생성기.exe.config`(loadFromRemoteSources=true)를 EXE 옆에 동봉
+     — 단 PyInstaller 6.x는 datas를 전부 `_internal/`로 보내므로 **datas로는 불가**,
+     spec의 COLLECT 뒤에서 `shutil.copy`로 최상위에 배치해야 함.
+  ② `app.py` frozen 분기에서 `import webview` 이전에 `_internal` 하위 `*.dll`의
+     `:Zone.Identifier` ADS를 `DeleteFileW`로 제거(try/except, 부팅 차단 금지).
+- **즉시 조치(재빌드 전 클라이언트)**: PowerShell
+  `Get-ChildItem -Path "<설치 폴더>" -Recurse | Unblock-File`
+  또는 ZIP 우클릭→속성→[차단 해제] 후 압축 해제.
+- **검증**: 재빌드 후 dist 파일들에 Zone.Identifier를 인위 부착(`Set-Content -Stream`)
+  → Unblock 없이 실행되는지 시뮬레이션 (M15 패키징 스모크에 포함).
+- **부수 교훈**: 배포 V1.1은 AIDEN-DESKTOP의 Python 3.13으로 빌드돼 이 PC(3.12/3.14)와
+  드리프트. 빌드는 **py -3.12로 통일**(spec·bat 표기와 일치), 빌드 PC 변경 시 버전 먼저 확인.

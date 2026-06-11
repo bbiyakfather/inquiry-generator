@@ -1,0 +1,502 @@
+﻿<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>내비온 견적서 생성기</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ===== 좌측 아이콘 사이드바 ===== -->
+  <aside class="sidebar">
+    <div class="brand" title="내비온 견적서 생성기">N</div>
+    <nav>
+      <button class="nav-btn active" data-view="dashboard" title="대시보드">
+        <svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z"/></svg>
+      </button>
+      <button class="nav-btn" data-view="editor" title="새 견적서">
+        <svg viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M12 12v6M9 15h6"/></svg>
+      </button>
+      <button class="nav-btn" data-view="minutes" title="회의록">
+        <svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+      </button>
+      <button class="nav-btn" data-view="settings" title="설정">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.01a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55h.01a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.01a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z"/></svg>
+      </button>
+    </nav>
+  </aside>
+
+  <!-- ===== 메인 영역 ===== -->
+  <main class="main">
+
+    <!-- ===== 대시보드 ===== -->
+    <section id="view-dashboard" class="view active">
+      <header class="topbar">
+        <div class="crumb"><span class="crumb-dim">견적서 관리</span> <span class="crumb-sep">›</span> <b>대시보드</b></div>
+        <div class="topbar-right">
+          <div class="search-box">
+            <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input id="search-input" type="text" placeholder="용역명·수신처 검색">
+          </div>
+          <div class="profile-chip">
+            <div class="avatar">N</div>
+            <div><div class="p-name">내비온</div><div class="p-sub">견적 관리자</div></div>
+          </div>
+        </div>
+      </header>
+
+      <div class="folder-bar card">
+        <svg viewBox="0 0 24 24" class="folder-ico"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        <span id="folder-path" class="folder-path">폴더를 선택하세요</span>
+        <button id="btn-pick-folder" class="btn btn-ghost">폴더 선택</button>
+        <button id="btn-rescan" class="btn btn-ghost">새로고침</button>
+        <div class="spacer"></div>
+        <div class="split-btn">
+          <button id="btn-new-quote" class="btn btn-primary">＋ 새 견적서</button>
+          <button id="btn-new-dropdown" class="btn btn-primary btn-caret">▾</button>
+          <div id="new-menu" class="menu hidden">
+            <button data-act="manual">직접 작성</button>
+            <button data-act="ai">✦ AI 초안으로 시작</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="stat-row">
+        <div class="card stat"><div class="stat-ico blue">📄</div><div><div class="stat-label">전체 견적서</div><div class="stat-num"><span id="st-total">0</span><span class="stat-unit">건</span></div></div></div>
+        <div class="card stat"><div class="stat-ico green">🗓️</div><div><div class="stat-label">이번 달</div><div class="stat-num"><span id="st-month">0</span><span class="stat-unit">건</span></div></div></div>
+        <div class="card stat"><div class="stat-ico violet">💰</div><div><div class="stat-label">견적 총액</div><div class="stat-num stat-money"><span id="st-amount">0</span><span class="stat-unit">원</span></div></div></div>
+        <div class="card stat"><div class="stat-ico orange">✏️</div><div><div class="stat-label">재편집 가능</div><div class="stat-num"><span id="st-editable">0</span><span class="stat-unit">건</span></div></div></div>
+      </div>
+
+      <div class="tabs">
+        <button class="tab active" data-tab="all">전체</button>
+        <button class="tab" data-tab="editable">프로그램 생성</button>
+        <button class="tab" data-tab="external">외부 HWP</button>
+      </div>
+
+      <div id="quote-grid" class="grid"></div>
+      <div id="empty-state" class="empty hidden">
+        <div class="empty-emoji">🗂️</div>
+        <p>표시할 견적서가 없습니다.<br>폴더를 선택하거나 새 견적서를 만들어 보세요.</p>
+      </div>
+    </section>
+
+    <!-- ===== 편집기 ===== -->
+    <section id="view-editor" class="view">
+      <header class="topbar">
+        <div class="crumb"><span class="crumb-dim">견적서 관리</span> <span class="crumb-sep">›</span> <b id="editor-title">새 견적서</b></div>
+        <div class="topbar-right">
+          <button id="btn-ai-open" class="btn btn-violet">✦ AI 초안</button>
+          <button id="btn-save-json" class="btn btn-ghost">임시 저장</button>
+          <button id="btn-gen-hwp" class="btn btn-outline">HWP 생성</button>
+          <button id="btn-gen-both" class="btn btn-primary">HWP + PDF 생성</button>
+        </div>
+      </header>
+
+      <div class="editor-layout">
+        <!-- 좌: 입력 -->
+        <div class="editor-form">
+
+          <div class="card form-card">
+            <h3>문서 정보</h3>
+            <div class="form-grid">
+              <label>수신처 <input id="f-recipient" placeholder="한국과학기술연구원"></label>
+              <label>견적번호 <span class="inline-row"><input id="f-quote-no" placeholder="제 2026-001호"><button id="btn-auto-no" class="btn btn-mini" title="자동 번호 발급">자동</button></span></label>
+              <label>견적일자 <input id="f-date" type="date"></label>
+              <label>용역기간 <input id="f-period" placeholder="계약일로부터 3주일"></label>
+              <label class="span2">용역명 <input id="f-svc-name" placeholder="OOO 사업 타당성 분석 용역"></label>
+              <label>참조 <input id="f-ref-name" placeholder="(선택)"></label>
+              <label>전화번호 <input id="f-ref-tel" placeholder="(선택)"></label>
+            </div>
+          </div>
+
+          <div class="card form-card">
+            <h3>견적 설정</h3>
+            <div class="goal-row">
+              <div class="seg" id="profit-seg">
+                <button data-v="1" class="active">이윤 포함 (10%)</button>
+                <button data-v="0">이윤 없음</button>
+              </div>
+              <label class="goal-target">목표금액(부가세 포함)
+                <input id="f-target" class="money" placeholder="22,000,000">
+              </label>
+              <label>조정 방식
+                <select id="f-gs-mode">
+                  <option value="labor_first">인건비 자동조정 (권장)</option>
+                  <option value="uniform">균등 참여율</option>
+                  <option value="ratio">현재 비율 유지</option>
+                </select>
+              </label>
+              <button id="btn-goalseek" class="btn btn-primary">⚖ 인건비 자동조정</button>
+            </div>
+            <div id="gs-result" class="gs-result hidden"></div>
+          </div>
+
+          <div class="card form-card">
+            <h3>인건비 <span class="h-sub" id="price-year-label"></span></h3>
+            <table class="input-table" id="labor-table">
+              <thead><tr><th>직급</th><th>명수</th><th>단가(원/월)</th><th>참여율(%)</th><th>기간(월)</th><th>금액</th><th title="자동조정 시 이 행의 명수·참여율을 그대로 두고 다른 직급만 조정합니다">🔒고정</th></tr></thead>
+              <tbody><!-- labor rows --></tbody>
+            </table>
+            <p class="form-hint">🔒 고정을 체크한 직급은 「인건비 자동조정」에서 명수·참여율이 바뀌지 않습니다 (예외값 유지).</p>
+          </div>
+
+          <div class="card form-card">
+            <h3>경비 <button id="btn-add-exp" class="btn btn-mini">＋ 항목 추가</button></h3>
+            <div id="exp-list"><!-- expense rows --></div>
+          </div>
+
+        </div>
+
+        <!-- 우: 미리보기 -->
+        <div class="editor-preview">
+          <div class="card guide-card" id="guide-card">
+            <h4>예산 가이드 <span class="h-sub">목표금액 기준 역산</span></h4>
+            <div id="guide-body" class="guide-body dim">목표금액을 입력하면 인건비·경비 적정 범위가 표시됩니다.</div>
+          </div>
+          <div class="card preview-card">
+            <div class="preview-head">
+              <h4>견적서 미리보기</h4>
+              <span id="preview-final" class="preview-final">0원</span>
+            </div>
+            <div id="preview-body"><!-- 견적서 표 재현 --></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 회의록 ===== -->
+    <section id="view-minutes" class="view">
+      <header class="topbar">
+        <div class="crumb"><span class="crumb-dim">내비온</span> <span class="crumb-sep">›</span> <b>회의록 생성</b></div>
+        <div class="topbar-right">
+          <span id="mn-step-indicator" class="h-sub">1단계: 회의 내용 입력</span>
+        </div>
+      </header>
+
+      <!-- 1단계: 입력 -->
+      <div id="minutes-step1" class="minutes-form">
+        <div class="card form-card">
+          <h3>회의 기본 정보 <span class="h-sub">AI 힌트용 (미입력 가능)</span></h3>
+          <div class="form-grid">
+            <label>회의 일시 <input id="mn-date" placeholder="2026. 06. 11.(수) 14:00~15:30"></label>
+            <label>회의 장소 <input id="mn-place" placeholder="내비온 회의실 또는 Zoom"></label>
+          </div>
+        </div>
+
+        <div class="card form-card">
+          <h3>회의 메모 <span class="h-sub">녹음 전사본, 요점 등을 붙여넣으세요</span></h3>
+          <textarea id="mn-memo" rows="10" placeholder="회의에서 논의된 내용을 자유롭게 입력하세요.&#10;녹음 전사본을 그대로 붙여넣어도 됩니다.&#10;파일로 첨부하려면 아래 드롭존을 이용하세요."></textarea>
+        </div>
+
+        <div class="card form-card">
+          <h3>파일 첨부 <span class="h-sub">녹음 전사본·메모·자료 (TXT는 Node.js 없이도 동작)</span></h3>
+          <div id="mn-node-banner" class="node-banner hidden">
+            ⚠ Node.js가 설치되지 않아 TXT·MD 외 변환 불가.
+            <a class="ext-link" data-url="https://nodejs.org/ko/download">[Node.js 설치]</a>
+          </div>
+          <div id="minutes-dropzone" class="dz-disabled">
+            <div class="dz-icon">📎</div>
+            <div class="dz-label"><b>녹음 전사본·메모 파일을 여기에 드롭</b>하거나<br>버튼으로 선택하세요</div>
+            <div class="dz-sub">TXT·MD는 Node.js 없이 동작 / HWP·PDF·DOCX·XLSX도 지원</div>
+            <button id="mn-pick-files" class="btn btn-ghost dz-pick-btn" type="button">파일 선택…</button>
+          </div>
+          <div id="mn-chips" class="ai-chips hidden"></div>
+        </div>
+
+        <div id="mn-status" class="ai-status"></div>
+        <div class="minutes-actions">
+          <button id="mn-run" class="btn btn-violet btn-wide">✦ AI 회의록 초안 생성</button>
+        </div>
+      </div>
+
+      <!-- 2단계: 검토·수정 -->
+      <div id="minutes-step2" class="hidden minutes-form">
+        <div class="card form-card">
+          <h3>기본 정보 <span class="h-sub">확인·수정 후 생성하세요</span></h3>
+          <div class="form-grid">
+            <label class="span2">사업명 <input id="mn-r-business" placeholder="사업명"></label>
+            <label>회의 일시 <input id="mn-r-date" placeholder="2026. 06. 11.(수) 14:00~15:30"></label>
+            <label>회의 장소 <input id="mn-r-place" placeholder="장소"></label>
+            <label class="span2">회의주제 <input id="mn-r-topic" placeholder="회의주제"></label>
+            <label>총 참석인원 <input id="mn-r-total" type="number" min="0" placeholder="5" style="width:90px"></label>
+          </div>
+        </div>
+
+        <div class="card form-card">
+          <h3>참석자 <span class="h-sub">기관별 한 줄, 첫 줄이 주관기관</span>
+            <button id="mn-r-add-participant" class="btn btn-mini" type="button">＋ 줄 추가</button>
+          </h3>
+          <div id="mn-r-participants" class="mn-participants"></div>
+        </div>
+
+        <div class="card form-card">
+          <h3>회의 내용 <span class="h-sub">항목 수정·추가·삭제</span>
+            <button id="mn-r-add-section" class="btn btn-mini" type="button">＋ 항목 추가</button>
+          </h3>
+          <div id="mn-r-sections" class="mn-sections"></div>
+        </div>
+
+        <div id="mn-r-status" class="ai-status"></div>
+        <div class="minutes-actions">
+          <button id="mn-r-back" class="btn btn-ghost" type="button">← 다시 생성</button>
+          <button id="mn-r-gen" class="btn btn-primary btn-wide" type="button">회의록 HWPX 생성 →</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 설정 ===== -->
+    <section id="view-settings" class="view">
+      <header class="topbar">
+        <div class="crumb"><span class="crumb-dim">견적서 관리</span> <span class="crumb-sep">›</span> <b>설정</b></div>
+      </header>
+      <div class="settings-layout">
+
+       <div class="settings-col">
+        <div class="card form-card">
+          <h3>학술용역 인건비 단가표 <span class="h-sub">기획재정부 학술연구용역 인건비 기준단가(월)</span></h3>
+          <div class="inline-row">
+            <label>적용 연도
+              <select id="s-price-year"></select>
+            </label>
+            <button id="btn-add-year" class="btn btn-mini">＋ 연도 추가</button>
+          </div>
+          <table class="input-table" id="price-table">
+            <thead><tr><th>직급</th><th>단가(원/월)</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <button id="btn-save-prices" class="btn btn-outline">단가표 저장</button>
+        </div>
+
+        <div class="card form-card">
+          <h3>인건비 자동조정 <span class="h-sub">직급별 최대 인원 (목표금액 맞출 때 보조원 등 명수 한도)</span></h3>
+          <div class="form-grid" id="maxcnt-grid"></div>
+          <p class="hint">※ 책임연구원은 규칙상 항상 1명으로 고정됩니다(참여율 10%). 보조원 명수가 이 한도까지 탄력 운영됩니다.</p>
+          <button id="btn-save-maxcnt" class="btn btn-outline">최대 인원 저장</button>
+        </div>
+
+        <div class="card form-card">
+          <h3>공급자 정보 <span class="h-sub">견적서 양식의 고정 정보 (양식 자체는 템플릿에 보존)</span></h3>
+          <div class="form-grid" id="company-grid"></div>
+          <button id="btn-save-company" class="btn btn-outline">공급자 정보 저장</button>
+          <p class="hint">※ 공급자 표 내용을 실제로 바꾸려면 templates/견적서_템플릿.hwp를 한글에서 직접 수정하세요. 이 정보는 참고용입니다.</p>
+        </div>
+       </div>
+
+       <div class="settings-col">
+        <div class="card form-card">
+          <h3>HWP 템플릿 <span class="h-sub">견적서 서식 파일</span></h3>
+          <div class="inline-row" style="align-items:center;gap:8px;flex-wrap:wrap">
+            <span id="tpl-name" class="folder-path" style="flex:1;min-width:0">기본 템플릿 (내장)</span>
+            <button id="btn-pick-tpl" class="btn btn-ghost">파일 선택</button>
+            <button id="btn-scan-tpl" class="btn btn-outline" disabled>분석·적용</button>
+          </div>
+          <div id="tpl-status" class="h-sub" style="margin-top:6px"></div>
+          <div id="tpl-scan-result" class="hidden" style="margin-top:10px">
+            <table class="tpl-map-table">
+              <thead><tr><th>템플릿 필드</th><th>→ 표준 슬롯</th></tr></thead>
+              <tbody id="tpl-map-body"></tbody>
+            </table>
+            <div id="tpl-unmapped" class="h-sub" style="margin-top:6px"></div>
+          </div>
+        </div>
+
+        <div class="card form-card diag-card">
+          <h3>진단 <span class="h-sub">환경·연결 상태 점검</span></h3>
+          <div class="inline-row">
+            <button id="btn-diag" class="btn btn-outline">환경 점검</button>
+            <button id="btn-diag-hwp" class="btn btn-ghost">한글 구동 테스트 (느림)</button>
+          </div>
+        </div>
+
+        <div class="card form-card">
+          <h3>사용 안내 <span class="h-sub">핵심 기능 둘러보기</span></h3>
+          <div class="inline-row">
+            <button id="btn-tutorial-replay" class="btn btn-outline">▶ 튜토리얼 다시 보기</button>
+          </div>
+        </div>
+
+        <div class="card form-card" id="card-ai-engine">
+          <h3>AI 엔진 <span class="h-sub">제공사·모델 선택 (각 키는 따로 저장)</span></h3>
+          <div class="form-grid">
+            <label class="span2">AI 제공사
+              <select id="s-ai-provider">
+                <option value="gemini">Google Gemini (무료 등급)</option>
+                <option value="openai">OpenAI (GPT · 유료)</option>
+                <option value="anthropic">Anthropic (Claude · 유료)</option>
+              </select>
+            </label>
+          </div>
+          <div class="guide-box" id="ai-guide-box">
+            <div class="guide-box-title">🔑 API 키 발급</div>
+            <ol class="guide-steps" id="ai-guide-steps"></ol>
+            <div class="guide-box-foot" id="ai-guide-foot"></div>
+          </div>
+          <div class="form-grid">
+            <label class="span2">API 키 <input id="s-ai-key" type="password" placeholder="API 키"></label>
+            <label class="span2">모델
+              <span class="inline-row">
+                <select id="s-ai-model" style="flex:1"></select>
+                <button id="btn-refresh-models" class="btn btn-mini" title="내 키로 사용 가능한 모델 조회">목록 새로고침</button>
+              </span>
+            </label>
+            <label class="span2 hidden" id="custom-model-wrap">직접 입력 모델명
+              <input id="s-ai-model-custom" placeholder="모델 ID 직접 입력">
+            </label>
+          </div>
+          <div class="inline-row">
+            <button id="btn-save-key" class="btn btn-outline">키·모델 저장</button>
+            <button id="btn-test-key" class="btn btn-ghost">키 확인</button>
+            <span id="key-status" class="hint"></span>
+          </div>
+        </div>
+
+        <div class="card form-card">
+          <h3>Google Drive 연동 <span class="h-sub">생성한 견적서를 드라이브에 업로드</span></h3>
+          <div id="drive-status" class="diag-line" style="margin-bottom:10px"><span class="diag-dot warn"></span><span class="diag-k">미연결</span><span class="diag-v">상태 확인 중...</span></div>
+          <div class="guide-box">
+            <div class="guide-box-title">📁 연결 방법</div>
+            <ol class="guide-steps">
+              <li><a class="ext-link" data-url="https://console.cloud.google.com/apis/credentials">Google Cloud Console → 사용자 인증 정보 ↗</a></li>
+              <li><b>OAuth 클라이언트 ID</b>(데스크톱 앱) 생성 → <code>client_secret.json</code> 다운로드</li>
+              <li>그 파일을 프로그램 폴더에 <code>client_secret.json</code> 이름으로 저장</li>
+              <li>아래 <b>Drive 연결</b> 클릭 → 브라우저에서 구글 로그인·허용</li>
+            </ol>
+          </div>
+          <label>업로드 폴더명(드라이브 내) <input id="s-drive-folder" placeholder="내비온 견적서"></label>
+          <label class="chk" style="margin-top:10px"><input id="s-drive-auto" type="checkbox"> 견적 생성 시 자동 업로드</label>
+          <div class="inline-row" style="margin-top:12px">
+            <button id="btn-drive-connect" class="btn btn-outline">Drive 연결</button>
+            <button id="btn-drive-disconnect" class="btn btn-ghost">연결 해제</button>
+          </div>
+        </div>
+       </div>
+
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ===== AI 모달 ===== -->
+<div id="ai-modal" class="modal-back hidden">
+  <div class="modal card" id="ai-modal-card">
+    <h3>✦ AI 자동 견적 초안</h3>
+
+    <!-- 1단계: 입력 -->
+    <div id="ai-step1">
+      <p class="hint">과업지시서(RFP)나 용역 내용을 붙여넣으면 AI가 그 내용을 분석해 인력 구성·경비 항목·내역 문구를 제안하고,
+        금액은 검증된 계산 엔진이 목표금액에 맞춰 확정합니다. 제안은 <b>검토·수정 후 반영</b>됩니다.</p>
+      <label>과업지시서 · 용역 설명 <span class="h-sub">RFP 전문을 붙여넣어도 됩니다</span>
+        <textarea id="ai-desc" rows="9" placeholder="과업지시서 내용을 그대로 붙여넣거나 용역을 설명하세요.&#10;예) 저가의 고효율 라이다 센서 사업 타당성 분석 용역.&#10;- 과업범위: 시장조사, 경쟁사·특허 분석, 인허가 검토, 해외진출 전략&#10;- 산출물: 최종보고서, 기술소개서(SMK)&#10;- 기간: 계약일로부터 3주"></textarea>
+      </label>
+      <div class="form-grid">
+        <label>목표금액(부가세 포함) <input id="ai-target" class="money" placeholder="22,000,000"></label>
+        <label class="chk" style="align-self:end"><input id="ai-profit" type="checkbox" checked> 이윤 포함(10%)</label>
+      </div>
+      <!-- 파일 첨부 영역 -->
+      <div id="ai-node-banner" class="node-banner hidden">
+        ⚠ Node.js가 설치되지 않아 문서 변환 기능을 사용할 수 없습니다.
+        <a class="ext-link" data-url="https://nodejs.org/ko/download">[Node.js 설치]</a>
+      </div>
+      <div id="ai-dropzone" class="dz-disabled">
+        <div class="dz-icon">📎</div>
+        <div class="dz-label"><b>과업지시서·RFP 파일을 여기에 드롭</b>하거나<br>버튼으로 선택하세요</div>
+        <div class="dz-sub">HWP·HWPX·PDF·DOCX·XLSX·TXT·MD 지원</div>
+        <button id="ai-pick-files" class="btn btn-ghost dz-pick-btn" type="button">파일 선택…</button>
+      </div>
+      <div id="ai-chips" class="ai-chips hidden"></div>
+      <div id="ai-md-preview" class="md-preview hidden"></div>
+
+      <div id="ai-status" class="ai-status"></div>
+      <div class="modal-actions">
+        <button id="ai-cancel" class="btn btn-ghost">닫기</button>
+        <button id="ai-run" class="btn btn-violet">✦ 초안 생성</button>
+      </div>
+    </div>
+
+    <!-- 2단계: 검토·수정 -->
+    <div id="ai-step2" class="hidden">
+      <p class="hint">AI 제안을 검토·수정한 뒤 <b>[견적서에 반영]</b>을 누르면 새 견적서 입력란에 채워집니다.
+        금액은 항상 계산 엔진이 확정합니다.</p>
+      <div id="ai-rationale" class="ai-note hidden"></div>
+      <div class="ai-sec-title">문서 정보 <span class="h-sub">수신처·견적번호 등 (비워두면 견적서에서 입력)</span></div>
+      <div class="form-grid">
+        <label class="span2">용역명 <input id="ai-svc-name" placeholder="OOO 기술마케팅 및 수요기업 발굴 용역"></label>
+        <label class="span2">용역기간 <input id="ai-period" placeholder="계약일로부터 3주일"></label>
+        <label>수신처 <input id="ai-recipient" placeholder="한국과학기술연구원"></label>
+        <label>견적번호 <span class="inline-row"><input id="ai-quote-no" placeholder="제 2026-001호"><button id="ai-auto-no" class="btn btn-mini" type="button" title="자동 번호 발급">자동</button></span></label>
+        <label>견적일자 <input id="ai-date" type="date"></label>
+        <label>참조 <input id="ai-ref-name" placeholder="(선택)"></label>
+        <label>전화번호 <input id="ai-ref-tel" placeholder="(선택)"></label>
+      </div>
+
+      <div class="ai-sec-title">인건비 구성 <span class="h-sub">명수·참여율·개월을 수정할 수 있습니다</span></div>
+      <table class="ai-table" id="ai-labor">
+        <thead><tr><th class="l">직급</th><th>명수</th><th class="r">단가(원/월)</th><th>참여율(%)</th><th>기간(월)</th><th class="r">금액</th></tr></thead>
+        <tbody></tbody>
+      </table>
+
+      <div class="ai-sec-title">경비 구성 <button id="ai-add-exp" class="btn btn-mini" type="button">＋ 항목 추가</button></div>
+      <div id="ai-exp"></div>
+
+      <div id="ai-sum" class="ai-summary"></div>
+
+      <div class="modal-actions ai-actions2">
+        <button id="ai-back" class="btn btn-ghost" type="button">← 다시 생성</button>
+        <span class="ai-actions-sp"></span>
+        <button id="ai-cancel2" class="btn btn-ghost" type="button">취소</button>
+        <button id="ai-confirm" class="btn btn-primary" type="button">견적서에 반영 →</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 진단 모달 ===== -->
+<div id="diag-modal" class="modal-back hidden">
+  <div class="modal card">
+    <h3 id="diag-modal-title">환경 점검</h3>
+    <div id="diag-modal-body" class="diag-body"></div>
+    <div class="modal-actions">
+      <button id="diag-close" class="btn btn-ghost">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 삭제 확인 모달 ===== -->
+<div id="del-modal" class="modal-back hidden">
+  <div class="modal card">
+    <h3>견적서 삭제</h3>
+    <p class="hint" id="del-target">선택한 견적서를 삭제합니다.</p>
+    <label class="chk" style="margin:6px 0"><input id="del-files" type="checkbox"> 폴더에 있는 실제 파일(.hwp/.pdf)도 함께 삭제</label>
+    <p class="hint" id="del-files-note">체크하지 않으면 목록에서만 제거되고(재편집 데이터 .quote.json만 삭제) 실제 한글/PDF 파일은 폴더에 남습니다.</p>
+    <div class="modal-actions">
+      <button id="del-cancel" class="btn btn-ghost">취소</button>
+      <button id="del-confirm" class="btn btn-danger">삭제</button>
+    </div>
+  </div>
+</div>
+
+<!-- 오버레이/토스트 -->
+<!-- ===== 튜토리얼 (코치마크 투어) ===== -->
+<div id="tour" class="tour hidden">
+  <div id="tour-hole"></div>
+  <div id="tour-card" class="card">
+    <div id="tour-title" class="tour-title"></div>
+    <div id="tour-body" class="tour-body"></div>
+    <div class="tour-foot">
+      <span id="tour-count" class="tour-count"></span>
+      <span class="spacer"></span>
+      <button id="tour-skip" class="btn btn-ghost">건너뛰기</button>
+      <button id="tour-prev" class="btn btn-ghost">이전</button>
+      <button id="tour-next" class="btn btn-primary">다음</button>
+    </div>
+  </div>
+</div>
+
+<div id="overlay" class="overlay hidden"><div class="spinner"></div><div id="overlay-msg">처리 중...</div></div>
+<div id="toast-wrap"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

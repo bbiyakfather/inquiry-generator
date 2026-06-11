@@ -1,0 +1,12 @@
+# 내비온 견적서 생성기 의존성
+# 표준 설치: pip install -r requirements.txt
+pywebview>=5.0      # 데스크톱 창 (Windows: WebView2 백엔드)
+pyhwpx>=0.44        # 한글(HWP) COM 자동화 + 보안모듈 자동등록
+requests>=2.30      # Gemini REST 호출
+openpyxl>=3.1       # (참고용) 엑셀 모델 분석
+olefile>=0.46       # HWP 바이너리 스캔 (PrvText/BodyText)
+pywin32>=305        # COM, DPAPI(win32crypt) 키 암호화
+# Google Drive 연동 (선택 — 미설치 시 Drive 기능만 비활성)
+google-api-python-client>=2.0
+google-auth-oauthlib>=1.0
+# 테스트: pytest>=8

@@ -1,0 +1,131 @@
+# -*- coding: utf-8 -*-
+"""견적 데이터 → HWP 템플릿 필드 값 매핑 (COM 무의존 순수 함수).
+
+템플릿 필드 (templates/견적서_템플릿.hwp, 107개):
+  누름틀: recv, quote_no, ref_name, ref_tel, quote_date
+  셀필드: svc_name, svc_period, amount_kor,
+          labor{1-4}_(grade|cnt|price|months|rate|amt|ratio),
+          labor_sum_(amt|ratio), exp{1-8}_(name|detail|qty|price|amt|ratio),
+          exp_sum_(amt|ratio), subtotal_(amt|ratio),
+          mgmt_(basis|amt|ratio), profit_(basis|amt|ratio),
+          supply_(amt|ratio), vat_(basis|amt|ratio),
+          trim_(label|basis|amt|ratio), final_(amt|ratio)
+"""
+from dataclasses import dataclass, field
+
+from src.engine.calc import (QuoteResult, fmt_won, fmt_pct, fmt_num, fmt_rate,
+                             round_half_up)
+from src.engine.money_kor import amount_kor
+
+MAX_LABOR = 4
+MAX_EXP = 8
+
+
+@dataclass
+class RenderPlan:
+    """HWP 생성 작업 명세 (COM 워커에 전달)."""
+    fields: dict                 # 필드명 → 텍스트
+    labor_used: int              # 사용 인건비 행 수 (1~4)
+    exp_used: int                # 사용 경비 행 수 (1~8)
+    show_trim: bool              # 절삭 행 유지 여부
+    warnings: list = field(default_factory=list)
+
+
+def _date_kor(iso_date: str) -> str:
+    """'2026-06-10' → '2026년 6월 10일'"""
+    try:
+        y, m, d = iso_date.split("-")
+        return f"{int(y)}년 {int(m)}월 {int(d)}일"
+    except Exception:
+        return iso_date
+
+
+def build_render_plan(doc: dict, result: QuoteResult) -> RenderPlan:
+    """doc: 문서 정보 dict, result: 계산 결과 → 필드 값 일체.
+
+    doc 키: recipient, quote_no, ref_name, ref_tel, date(ISO),
+            service_name, service_period
+    """
+    warnings = []
+    labor_rows = [r for r in result.labor_rows if r.count > 0]
+    exp_rows = [e for e in result.expense_rows if e.name.strip()]
+
+    if len(labor_rows) > MAX_LABOR:
+        warnings.append(f"인건비 직급이 {MAX_LABOR}개를 초과해 앞 {MAX_LABOR}개만 출력합니다.")
+        labor_rows = labor_rows[:MAX_LABOR]
+    if len(exp_rows) > MAX_EXP:
+        warnings.append(f"경비 항목이 {MAX_EXP}개를 초과해 앞 {MAX_EXP}개만 출력합니다.")
+        exp_rows = exp_rows[:MAX_EXP]
+    if not labor_rows:
+        warnings.append("인건비 행이 없습니다. 최소 1개 직급이 필요합니다.")
+
+    f = {}
+    # ---- 누름틀 (빈 값은 안내문 노출 방지 위해 공백 1칸) ----
+    f["recv"] = doc.get("recipient") or " "
+    f["quote_no"] = doc.get("quote_no") or " "
+    f["ref_name"] = (" " + doc["ref_name"]) if doc.get("ref_name") else " "
+    f["ref_tel"] = (" " + doc["ref_tel"]) if doc.get("ref_tel") else " "
+    f["quote_date"] = _date_kor(doc.get("date", ""))
+
+    # ---- 기본 정보 ----
+    f["svc_name"] = doc.get("service_name", "")
+    f["svc_period"] = doc.get("service_period", "")
+    final_won = round_half_up(result.final)
+    f["amount_kor"] = amount_kor(final_won)
+
+    # ---- 인건비 행 ----
+    for i, r in enumerate(labor_rows, start=1):
+        f[f"labor{i}_grade"] = r.grade
+        f[f"labor{i}_cnt"] = f"{fmt_num(r.count)}명"
+        f[f"labor{i}_price"] = fmt_won(r.unit_price)
+        f[f"labor{i}_months"] = f"{fmt_num(r.months)}개월"
+        f[f"labor{i}_rate"] = fmt_rate(r.rate)
+        f[f"labor{i}_amt"] = fmt_won(r.amount)
+        f[f"labor{i}_ratio"] = fmt_pct(result.ratio(r.amount))
+    f["labor_sum_amt"] = fmt_won(result.labor_total)
+    f["labor_sum_ratio"] = fmt_pct(result.ratio(result.labor_total))
+
+    # ---- 경비 행 ----
+    for i, e in enumerate(exp_rows, start=1):
+        f[f"exp{i}_name"] = e.name
+        f[f"exp{i}_detail"] = "\r\n".join(e.details) if e.details else " "
+        f[f"exp{i}_qty"] = e.qty_text or (fmt_num(e.qty) if e.qty else "-")
+        f[f"exp{i}_price"] = fmt_won(e.unit_price) if e.unit_price is not None else "-"
+        f[f"exp{i}_amt"] = fmt_won(e.amount)
+        f[f"exp{i}_ratio"] = fmt_pct(result.ratio(e.amount))
+    f["exp_sum_amt"] = fmt_won(result.expense_total)
+    f["exp_sum_ratio"] = fmt_pct(result.ratio(result.expense_total))
+
+    # ---- 합계 블록 ----
+    f["subtotal_amt"] = fmt_won(result.direct)
+    f["subtotal_ratio"] = fmt_pct(result.ratio(result.direct))
+    f["mgmt_basis"] = "인건비+경비의 5%"
+    f["mgmt_amt"] = fmt_won(result.mgmt)
+    f["mgmt_ratio"] = fmt_pct(result.ratio(result.mgmt))
+    if result.profit_on:
+        f["profit_basis"] = "인건비+경비+일반관리비의 10%"
+        f["profit_amt"] = fmt_won(result.profit)
+        f["profit_ratio"] = fmt_pct(result.ratio(result.profit))
+    else:
+        f["profit_basis"] = "이윤 미계상"
+        f["profit_amt"] = "-"
+        f["profit_ratio"] = "-"
+    f["supply_amt"] = fmt_won(result.supply)
+    f["supply_ratio"] = fmt_pct(result.ratio(result.supply))
+    f["vat_basis"] = "공급가액의 10%"
+    f["vat_amt"] = fmt_won(result.vat)
+    f["vat_ratio"] = fmt_pct(result.ratio(result.vat))
+
+    show_trim = round_half_up(result.trim) > 0
+    if show_trim:
+        f["trim_label"] = "만원미만 절삭"
+        f["trim_basis"] = "만원 미만 절삭"
+        f["trim_amt"] = f"-{fmt_won(result.trim)}"
+        f["trim_ratio"] = f"-{fmt_pct(result.ratio(result.trim))}"
+
+    f["final_amt"] = fmt_won(result.final)
+    f["final_ratio"] = fmt_pct(result.ratio(result.final))
+
+    return RenderPlan(fields=f, labor_used=max(1, len(labor_rows)),
+                      exp_used=max(1, len(exp_rows)),
+                      show_trim=show_trim, warnings=warnings)

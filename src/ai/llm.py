@@ -1,0 +1,252 @@
+# -*- coding: utf-8 -*-
+"""멀티 LLM 프로바이더 추상화 — Gemini / OpenAI / Anthropic 공통 JSON 호출.
+
+기존 코드가 requests 기반(SDK 미사용)이고 PyInstaller로 패키징되므로,
+세 프로바이더 모두 raw HTTP(requests)로 통일한다. 각 프로바이더의 구조화 출력
+방식만 다르게 처리하고, 결과는 항상 파싱된 dict로 돌려준다.
+
+complete_json(provider, api_key, model, prompt, schema?) -> {ok, data?/error?, model_error?}
+  - schema: Gemini 방언 스키마(대문자 타입). None이면 JSON 모드만(스키마 강제 없음).
+list_models(provider, api_key) -> {ok, models?/error?}
+validate_key(provider, api_key) -> {ok, models?/error?}
+"""
+import json
+import time
+
+import requests
+
+GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
+OPENAI_BASE = "https://api.openai.com/v1"
+ANTHROPIC_BASE = "https://api.anthropic.com/v1"
+ANTHROPIC_VERSION = "2023-06-01"
+
+# API 미조회 시 폴백 기본 모델 목록 (사용자는 '직접 입력'으로 임의 모델 사용 가능)
+DEFAULT_MODELS = {
+    "openai": ["gpt-5.1", "gpt-5", "gpt-4.1", "gpt-4o"],
+    "anthropic": ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"],
+}
+
+PROVIDER_LABELS = {
+    "gemini": "Google Gemini",
+    "openai": "OpenAI (GPT)",
+    "anthropic": "Anthropic (Claude)",
+}
+
+
+# ---------- 공통 유틸 ----------
+
+def _extract_json(text: str):
+    """코드펜스/잡텍스트가 섞여도 첫 JSON 오브젝트를 추출해 파싱."""
+    t = (text or "").strip()
+    if t.startswith("```"):
+        t = t.split("```", 2)[1] if t.count("```") >= 2 else t.strip("`")
+        if t.lstrip().lower().startswith("json"):
+            t = t.lstrip()[4:]
+    start = t.find("{")
+    end = t.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        t = t[start:end + 1]
+    return json.loads(t)
+
+
+_JSON_TYPE = {"OBJECT": "object", "STRING": "string", "ARRAY": "array",
+              "INTEGER": "integer", "NUMBER": "number", "BOOLEAN": "boolean"}
+
+
+def gemini_to_jsonschema(s):
+    """Gemini 방언(대문자 타입) → 표준 JSON Schema (OpenAI/Anthropic strict 용).
+
+    객체에는 additionalProperties:false + required 전체를 강제(Anthropic 요건).
+    동적 키 오브젝트(additionalProperties가 스키마)는 표현 불가 → None 반환.
+    """
+    if not isinstance(s, dict):
+        return s
+    t = s.get("type")
+    # 동적 키 맵은 strict json_schema로 표현 불가
+    if isinstance(s.get("additionalProperties"), dict):
+        return None
+    out = {}
+    if t:
+        out["type"] = _JSON_TYPE.get(t, str(t).lower())
+    if s.get("description"):
+        out["description"] = s["description"]
+    if "enum" in s:
+        out["enum"] = s["enum"]
+    if out.get("type") == "object":
+        props = s.get("properties", {}) or {}
+        conv = {k: gemini_to_jsonschema(v) for k, v in props.items()}
+        if any(v is None for v in conv.values()):
+            return None
+        out["properties"] = conv
+        out["required"] = s.get("required", list(props.keys()))
+        out["additionalProperties"] = False
+    if out.get("type") == "array" and "items" in s:
+        item = gemini_to_jsonschema(s["items"])
+        if item is None:
+            return None
+        out["items"] = item
+    return out
+
+
+def _err(msg, **kw):
+    return {"ok": False, "error": str(msg), **kw}
+
+
+# ---------- Gemini ----------
+
+def _gemini_json(api_key, model, prompt, schema, timeout):
+    gen = {"temperature": 0.2, "responseMimeType": "application/json"}
+    if schema:
+        gen["responseSchema"] = schema
+    payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": gen}
+    url = f"{GEMINI_BASE}/models/{model}:generateContent"
+    r = requests.post(url, json=payload, timeout=timeout,
+                      headers={"x-goog-api-key": api_key, "Content-Type": "application/json"})
+    if r.status_code == 200:
+        data = r.json()
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        return {"ok": True, "data": _extract_json(text)}
+    if r.status_code == 404 or (r.status_code == 400 and "not found" in r.text.lower()):
+        return _err(_model_msg("Gemini", model), model_error=True, status=r.status_code)
+    if r.status_code in (400, 401, 403):
+        return _err(_key_msg(r.status_code, r.text), status=r.status_code)
+    return _err(f"Gemini 오류 (HTTP {r.status_code}): {r.text[:160]}", status=r.status_code)
+
+
+# ---------- OpenAI ----------
+
+def _openai_json(api_key, model, prompt, timeout):
+    url = f"{OPENAI_BASE}/chat/completions"
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "너는 오직 JSON 객체만 출력한다. 설명·코드펜스 금지."},
+            {"role": "user", "content": prompt},
+        ],
+        "response_format": {"type": "json_object"},
+    }
+    r = requests.post(url, json=payload, timeout=timeout,
+                      headers={"Authorization": f"Bearer {api_key}",
+                               "Content-Type": "application/json"})
+    if r.status_code == 200:
+        content = r.json()["choices"][0]["message"]["content"]
+        return {"ok": True, "data": _extract_json(content)}
+    if r.status_code == 404 or (r.status_code == 400 and "model" in r.text.lower()
+                                and ("not" in r.text.lower() or "exist" in r.text.lower())):
+        return _err(_model_msg("OpenAI", model), model_error=True, status=r.status_code)
+    if r.status_code in (401, 403):
+        return _err(_key_msg(r.status_code, r.text), status=r.status_code)
+    return _err(f"OpenAI 오류 (HTTP {r.status_code}): {r.text[:160]}", status=r.status_code)
+
+
+# ---------- Anthropic ----------
+
+def _anthropic_json(api_key, model, prompt, schema, timeout):
+    url = f"{ANTHROPIC_BASE}/messages"
+    payload = {
+        "model": model,
+        "max_tokens": 8000,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    std = gemini_to_jsonschema(schema) if schema else None
+    if std:
+        # 구조화 출력 강제 (output_config.format — 유효 JSON 보장)
+        payload["output_config"] = {"format": {"type": "json_schema", "schema": std}}
+    else:
+        # 스키마 표현 불가(동적 키 등) → 프롬프트로 JSON 전용 출력 지시
+        payload["system"] = "오직 유효한 JSON 객체 하나만 출력한다. 설명·코드펜스·여는말 금지."
+    r = requests.post(url, json=payload, timeout=timeout,
+                      headers={"x-api-key": api_key,
+                               "anthropic-version": ANTHROPIC_VERSION,
+                               "content-type": "application/json"})
+    if r.status_code == 200:
+        data = r.json()
+        text = next((b.get("text", "") for b in data.get("content", [])
+                     if b.get("type") == "text"), "")
+        return {"ok": True, "data": _extract_json(text)}
+    if r.status_code == 404:
+        return _err(_model_msg("Anthropic", model), model_error=True, status=r.status_code)
+    if r.status_code in (401, 403):
+        return _err(_key_msg(r.status_code, r.text), status=r.status_code)
+    return _err(f"Anthropic 오류 (HTTP {r.status_code}): {r.text[:160]}", status=r.status_code)
+
+
+def _model_msg(label, model):
+    return (f"선택한 {label} 모델 '{model}'을(를) 사용할 수 없습니다(종료·오타·미지원 모델).\n"
+            "설정 화면에서 모델을 변경하거나 목록을 새로고침하세요.")
+
+
+def _key_msg(code, text):
+    return (f"API 키 또는 요청 오류 (HTTP {code}). API 키가 올바른지 확인하세요.\n{text[:160]}")
+
+
+# ---------- 공개 API ----------
+
+_RETRY_STATUS = {429, 500, 502, 503, 529}
+
+
+def complete_json(provider, api_key, model, prompt, schema=None, timeout=60):
+    """프로바이더 공통 JSON 응답. 일시 오류(429/5xx)는 대기 후 최대 3회 재시도.
+
+    오류 dict에는 status(HTTP 코드)가 실리며, 재시도 판단은 이 코드로만 한다."""
+    if not api_key:
+        return _err(f"{PROVIDER_LABELS.get(provider, provider)} API 키가 없습니다. 설정에서 입력하세요.")
+    last = None
+    for attempt in range(3):
+        try:
+            if provider == "gemini":
+                r = _gemini_json(api_key, model, prompt, schema, timeout)
+            elif provider == "openai":
+                r = _openai_json(api_key, model, prompt, timeout)
+            elif provider == "anthropic":
+                r = _anthropic_json(api_key, model, prompt, schema, timeout)
+            else:
+                return _err(f"알 수 없는 AI 프로바이더: {provider}")
+        except requests.Timeout:
+            return _err(f"응답 시간 초과({timeout}초).")
+        except Exception as e:
+            return _err(f"네트워크 오류: {e}")
+
+        if r.get("ok"):
+            return r
+        last = r
+        if r.get("status") in _RETRY_STATUS and attempt < 2:
+            time.sleep(8 * (attempt + 1))
+            continue
+        return r          # 모델/키/요청 오류 — 재시도 무의미
+    return last or _err("AI 호출 실패")
+
+
+def list_models(provider, api_key, timeout=20):
+    """프로바이더별 사용 가능 모델 목록 (드롭다운 새로고침용)."""
+    if not api_key:
+        return _err("먼저 API 키를 저장하세요.")
+    try:
+        if provider == "openai":
+            r = requests.get(f"{OPENAI_BASE}/models", timeout=timeout,
+                             headers={"Authorization": f"Bearer {api_key}"})
+            if r.status_code != 200:
+                return _err(f"HTTP {r.status_code}: {r.text[:160]}")
+            ids = [m.get("id", "") for m in r.json().get("data", [])]
+            ids = [i for i in ids if i.startswith(("gpt-", "o1", "o3", "o4", "chatgpt"))]
+            ids.sort(reverse=True)
+            return {"ok": True, "models": ids or DEFAULT_MODELS["openai"]}
+        if provider == "anthropic":
+            r = requests.get(f"{ANTHROPIC_BASE}/models", timeout=timeout,
+                             headers={"x-api-key": api_key,
+                                      "anthropic-version": ANTHROPIC_VERSION})
+            if r.status_code != 200:
+                return _err(f"HTTP {r.status_code}: {r.text[:160]}")
+            ids = [m.get("id", "") for m in r.json().get("data", [])]
+            ids = [i for i in ids if i]
+            return {"ok": True, "models": ids or DEFAULT_MODELS["anthropic"]}
+        return _err(f"모델 목록 미지원 프로바이더: {provider}")
+    except Exception as e:
+        return _err(str(e))
+
+
+def validate_key(provider, api_key, timeout=20):
+    res = list_models(provider, api_key, timeout)
+    if res.get("ok"):
+        return {"ok": True, "models": res["models"][:12]}
+    return res
