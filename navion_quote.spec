@@ -154,10 +154,37 @@ _shutil.copy(
 # COLLECT 후 exe 옆에 직접 복사하고, 빌드 머신의 node.exe도 동봉한다.
 _kordoc_src = _os.path.join(SPECPATH, "kordoc-runtime")
 _kordoc_dst = _os.path.join(_dist_dir, "kordoc-runtime")
+
+# npm이 설치한 node_modules에는 읽기 전용 파일이 섞여 있어 기본 shutil.rmtree가
+# WinError 5(액세스 거부)로 죽는다. 읽기 전용 비트를 풀고 재시도하는 핸들러를 단다.
+# (PyInstaller COLLECT의 _make_clean_directory도 같은 이유로 실패하므로, 빌드 전
+#  반드시 dist\...\kordoc-runtime 을 이 방식으로 정리해야 한다.)
+import stat as _stat
+def _rm_readonly(_func, _path, _exc):
+    try:
+        _os.chmod(_path, _stat.S_IWRITE)
+        _func(_path)
+    except Exception:
+        pass
+def _rmtree_safe(_p):
+    # py3.12+ 는 onexc, 이전은 onerror
+    try:
+        _shutil.rmtree(_p, onexc=lambda f, p, e: _rm_readonly(f, p, e))
+    except TypeError:
+        _shutil.rmtree(_p, onerror=lambda f, p, e: _rm_readonly(f, p, e))
+
 if _os.path.isdir(_kordoc_src):
     if _os.path.isdir(_kordoc_dst):
-        _shutil.rmtree(_kordoc_dst)
+        _rmtree_safe(_kordoc_dst)
     _shutil.copytree(_kordoc_src, _kordoc_dst)
+    # 동봉 직후 읽기 전용 속성 제거 — 다음 빌드의 rmtree와 사용자 PC의 업데이트
+    # robocopy·삭제가 같은 WinError 5로 막히지 않도록 한다.
+    for _r, _ds, _fs in _os.walk(_kordoc_dst):
+        for _n in _fs:
+            try:
+                _os.chmod(_os.path.join(_r, _n), _stat.S_IWRITE)
+            except Exception:
+                pass
     # 빌드 머신의 node.exe를 동봉 (사용자가 Node.js를 별도 설치할 필요 없음)
     _node_dst = _os.path.join(_kordoc_dst, "node.exe")
     if not _os.path.isfile(_node_dst):
