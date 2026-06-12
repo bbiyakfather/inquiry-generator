@@ -12,12 +12,22 @@ from PyInstaller.utils.hooks import collect_all, collect_data_files
 
 # templates 폴더 전체가 아니라 실제 사용하는 템플릿 1개만 번들.
 # (직인 포함 백업본 '견적서_템플릿_직인포함.hwp'가 배포물에 들어가지 않도록)
+import os as _os_pre
+# fieldmap.json: 빌드 전 tools/rescan_template.py 실행으로 생성 (없으면 경고)
+_fieldmap = "templates/견적서_템플릿.fieldmap.json"
+if not _os_pre.path.isfile(_fieldmap):
+    print(f"[spec] 경고: {_fieldmap} 없음. "
+          "빌드 전 'python tools/rescan_template.py'를 실행하세요.")
+
 datas = [
     ("ui", "ui"),
     ("templates/견적서_템플릿.hwp", "templates"),
     ("templates/회의록_양식.hwpx", "templates"),
     *collect_data_files('certifi'),   # cacert.pem — HTTPS 요청용 TLS 인증서 번들
 ]
+# fieldmap.json이 있으면 번들에 포함 (없어도 빌드는 계속)
+if _os_pre.path.isfile(_fieldmap):
+    datas.append((_fieldmap, "templates"))
 binaries = []
 hiddenimports = [
     # pywin32 (pyhwpx COM + DPAPI 키 암호화)
