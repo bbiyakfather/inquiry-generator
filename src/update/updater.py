@@ -249,12 +249,25 @@ Log '정리 완료'
 
     try:
         import subprocess
-        DETACHED_PROCESS = 0x00000008
+        # 창 없는(windowed) 앱에서 자식을 띄울 때 주의점:
+        #  - DETACHED_PROCESS 와 CREATE_NO_WINDOW 동시 지정은 상호배타라 자식이 즉사한다.
+        #    → CREATE_NO_WINDOW 만 사용(콘솔 창 없음 + 부모 종료 후에도 생존).
+        #  - 부모에 유효한 std 핸들이 없으므로 stdin/out/err 를 DEVNULL 로 명시해야
+        #    PowerShell 이 정상 기동한다(누락 시 핸들 무효로 즉시 종료).
         CREATE_NO_WINDOW = 0x08000000
+        # PATH 미해석 대비 powershell 절대경로
+        ps_exe = os.path.join(
+            os.environ.get("SystemRoot", r"C:\Windows"),
+            "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+        if not os.path.isfile(ps_exe):
+            ps_exe = "powershell"
         subprocess.Popen(
-            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+            [ps_exe, "-NoProfile", "-ExecutionPolicy", "Bypass",
              "-WindowStyle", "Hidden", "-File", ps_path],
-            creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
+            creationflags=CREATE_NO_WINDOW,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             close_fds=True,
         )
     except Exception as e:
