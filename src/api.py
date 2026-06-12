@@ -1037,7 +1037,15 @@ class Api:
                     out_path = os.path.join(folder, f"회의록_{topic}_{date_tag}.hwpx")
 
             tpl = cs.get_minutes_tpl(self.cfg) or None
-            res = build_minutes(data, template_hwpx=tpl, out_path=out_path or None)
+            # 커스텀 양식이면 AI 분석 cell_map 적용 (없으면 표준 좌표)
+            cell_map = None
+            if tpl:
+                from src.ai.minutes_template_mapper import load_minutes_fieldmap
+                fm = load_minutes_fieldmap(tpl)
+                if fm and not fm.get("is_standard"):
+                    cell_map = fm.get("cell_map") or None
+            res = build_minutes(data, template_hwpx=tpl, out_path=out_path or None,
+                                cell_map=cell_map)
             if not res.get("ok"):
                 return _err(res.get("error", "HWPX 생성 실패"))
 
@@ -1149,18 +1157,62 @@ class Api:
             return _err(e)
 
     def get_minutes_template(self):
-        """현재 활성 회의록 양식 정보 (커스텀 우선, 없으면 내장)."""
+        """현재 활성 회의록 양식 정보 (커스텀 우선, 없으면 내장) + AI 분석 상태."""
         try:
             from src.minutes.hwpx_minutes import TEMPLATE_MINUTES
+            from src.ai.minutes_template_mapper import load_minutes_fieldmap
             custom = cs.get_minutes_tpl(self.cfg)
             if custom and os.path.isfile(custom):
+                fm = load_minutes_fieldmap(custom)
                 return {"ok": True, "name": os.path.basename(custom),
-                        "path": custom, "exists": True, "is_custom": True}
+                        "path": custom, "exists": True, "is_custom": True,
+                        "has_fieldmap": bool(fm),
+                        "is_standard": fm.get("is_standard", False) if fm else False,
+                        "mapped": len((fm.get("cell_map") or {})) if fm else 0,
+                        "unmapped": fm.get("unmapped", []) if fm else []}
             return {"ok": True, "name": os.path.basename(TEMPLATE_MINUTES),
                     "path": TEMPLATE_MINUTES, "exists": os.path.isfile(TEMPLATE_MINUTES),
-                    "is_custom": False}
+                    "is_custom": False, "has_fieldmap": False, "is_standard": True}
         except Exception as e:
             return _err(e)
+
+    def scan_minutes_template(self, hwpx_path: str) -> dict:
+        """회의록 HWPX 양식의 표 구조를 스캔 → AI로 슬롯별 셀좌표 매핑 → 캐시.
+
+        반환: {ok, is_standard, cell_map, unmapped, slot_labels, ai_used, ai_error?, fieldmap_path}
+        """
+        try:
+            from src.scan.hwpx_scan import scan_hwpx_grid
+            from src.ai.minutes_template_mapper import (
+                map_minutes_cells, save_minutes_fieldmap, MINUTES_SLOTS)
+            if not os.path.isfile(hwpx_path):
+                return _err(f"파일을 찾을 수 없습니다: {hwpx_path}")
+
+            grid = scan_hwpx_grid(hwpx_path)
+            if not grid.get("ok"):
+                return grid
+
+            provider = cs.get_provider(self.cfg)
+            api_key = cs.get_ai_key(self.cfg, provider)
+            map_r = map_minutes_cells(grid["cells"], provider, api_key,
+                                      cs.get_ai_model(self.cfg, provider))
+            result = {
+                "ok": True,
+                "ai_used": True,
+                "cell_map": map_r.get("cell_map", {}),
+                "unmapped": map_r.get("unmapped", []),
+                "slot_labels": MINUTES_SLOTS,
+            }
+            if not map_r.get("ok"):
+                result["ai_error"] = map_r.get("error", "")
+
+            fm_path = save_minutes_fieldmap(hwpx_path, map_r)
+            result["fieldmap_path"] = fm_path
+            from src.ai.minutes_template_mapper import load_minutes_fieldmap
+            result["is_standard"] = load_minutes_fieldmap(hwpx_path).get("is_standard", False)
+            return result
+        except Exception as e:
+            return _err(e, traceback=traceback.format_exc())
 
     def pick_minutes_template_file(self) -> dict:
         """파일 선택 대화상자로 HWPX 파일 경로 반환."""

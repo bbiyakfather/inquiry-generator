@@ -141,6 +141,51 @@ def parse_minutes_hwpx(path: str) -> MinutesMeta:
     return meta
 
 
+def scan_hwpx_grid(path: str) -> dict:
+    """회의록 HWPX 템플릿의 첫 번째 표 전체 셀을 그리드로 추출 (AI 분석 입력용).
+
+    반환: {ok, row_cnt, col_cnt, cells: [{row, col, text}, ...], error?}
+    각 cell.text 는 라벨("사업명" 등) 또는 기존 샘플값. AI가 이 그리드를 보고
+    표준 슬롯을 어느 값 셀(row,col)에 채울지 판단한다.
+    """
+    try:
+        with zipfile.ZipFile(path) as zf:
+            with zf.open("Contents/section0.xml") as fp:
+                root = ET.parse(fp).getroot()
+    except (zipfile.BadZipFile, OSError, KeyError, ET.ParseError) as e:
+        return {"ok": False, "error": f"HWPX 파싱 실패: {e}"}
+
+    tbl = root.find(f".//{_HP}tbl")
+    if tbl is None:
+        return {"ok": False, "error": "양식에서 표를 찾을 수 없습니다."}
+
+    cells = []
+    max_r = max_c = 0
+    for tr in tbl.findall(f"{_HP}tr"):
+        for tc in tr.findall(f"{_HP}tc"):
+            addr = tc.find(f"{_HP}cellAddr")
+            if addr is None:
+                continue
+            try:
+                r = int(addr.attrib.get("rowAddr", "0"))
+                c = int(addr.attrib.get("colAddr", "0"))
+            except ValueError:
+                continue
+            max_r, max_c = max(max_r, r), max(max_c, c)
+            sl = tc.find(f"{_HP}subList")
+            txt = ""
+            if sl is not None:
+                lines = []
+                for p in sl.findall(f"{_HP}p"):
+                    line = "".join(t.text or "" for t in p.findall(f".//{_HP}t")).strip()
+                    if line:
+                        lines.append(line)
+                txt = " ⏎ ".join(lines)
+            cells.append({"row": r, "col": c, "text": txt[:120]})
+
+    return {"ok": True, "row_cnt": max_r + 1, "col_cnt": max_c + 1, "cells": cells}
+
+
 def scan_folder(folder: str) -> list:
     """폴더 내 .hwpx 전수 스캔 + .minutes.json 사이드카 연동."""
     results = []

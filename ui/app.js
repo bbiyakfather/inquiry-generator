@@ -1440,11 +1440,25 @@ async function scanTemplate() {
 /* ===================================================================
    회의록 양식 관리
 =================================================================== */
+// 분석 대상 커스텀 양식 경로 (분석·적용 버튼용)
+let _mnTplPath = null;
+
 async function initMinutesTemplateStatus() {
   const r = await call('get_minutes_template');
   if (!r.ok) return;
   $('#mn-tpl-name').textContent = r.name || '기본 양식 (내장)';
-  $('#mn-tpl-status').textContent = r.is_custom ? '커스텀 양식 적용 중' : '기본 내장 양식 사용 중';
+  if (!r.is_custom) {
+    $('#mn-tpl-status').textContent = '기본 내장 양식 사용 중';
+    $('#btn-scan-mn-tpl').disabled = true;
+  } else if (r.has_fieldmap) {
+    $('#mn-tpl-status').textContent = r.is_standard
+      ? '커스텀 양식 — 표준 구조 확인됨'
+      : `커스텀 양식 — AI 분석 적용됨 (${r.mapped}개 셀 매핑${(r.unmapped || []).length ? `, 미매핑 ${r.unmapped.length}개` : ''})`;
+    _mnTplPath = r.path; $('#btn-scan-mn-tpl').disabled = false;
+  } else {
+    $('#mn-tpl-status').textContent = '커스텀 양식 — [분석·적용]으로 표 구조를 분석하세요.';
+    _mnTplPath = r.path; $('#btn-scan-mn-tpl').disabled = false;
+  }
 }
 
 async function pickMinutesTemplate() {
@@ -1452,14 +1466,57 @@ async function pickMinutesTemplate() {
   if (!r.ok || r.cancelled) return;
   const r2 = await call('set_minutes_template', r.path);
   if (!r2.ok) { toast(r2.error || '양식 저장 실패', 'err'); return; }
+  _mnTplPath = r.path;
   $('#mn-tpl-name').textContent = r.path.split(/[/\\]/).pop();
-  $('#mn-tpl-status').textContent = '커스텀 양식 적용 중';
+  $('#mn-tpl-status').textContent = '커스텀 양식 적용됨 — [분석·적용]으로 표 구조를 분석하세요.';
+  $('#btn-scan-mn-tpl').disabled = false;
+  $('#mn-tpl-scan-result').classList.add('hidden');
   toast('회의록 양식이 변경됐습니다', 'ok');
+}
+
+async function scanMinutesTemplate() {
+  if (!_mnTplPath) return;
+  $('#btn-scan-mn-tpl').disabled = true;
+  $('#mn-tpl-status').textContent = '분석 중… (AI가 표 구조를 해석)';
+  $('#mn-tpl-scan-result').classList.add('hidden');
+
+  const r = await call('scan_minutes_template', _mnTplPath);
+  if (!r.ok) {
+    $('#mn-tpl-status').textContent = `오류: ${r.error}`;
+    $('#btn-scan-mn-tpl').disabled = false;
+    return;
+  }
+
+  const cellMap = r.cell_map || {};
+  const mapped = Object.keys(cellMap).length;
+  const unmapped = (r.unmapped || []);
+  let msg = r.is_standard ? '표준 구조 확인 ✓' : `AI 매핑 ${mapped}개 셀 완료`;
+  if (r.ai_error) msg += ` (AI 오류: ${r.ai_error})`;
+  if (unmapped.length) msg += `, 미매핑 ${unmapped.length}개`;
+  $('#mn-tpl-status').textContent = msg;
+
+  const labels = r.slot_labels || {};
+  const tbody = $('#mn-tpl-map-body');
+  tbody.innerHTML = '';
+  for (const [slot, rc] of Object.entries(cellMap)) {
+    const label = (labels[slot] || slot).split(' (')[0];
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${esc(label)}</td><td><code>(${rc[0]}, ${rc[1]})</code></td>`;
+    tbody.appendChild(tr);
+  }
+  $('#mn-tpl-unmapped').textContent = unmapped.length
+    ? `미매핑 항목: ${unmapped.map(s => (labels[s] || s).split(' (')[0]).join(', ')}` : '';
+  $('#mn-tpl-scan-result').classList.toggle('hidden', mapped === 0);
+  $('#btn-scan-mn-tpl').disabled = false;
+  toast('회의록 양식 분석·적용 완료', 'ok');
 }
 
 async function resetMinutesTemplate() {
   const r = await call('set_minutes_template', '');
   if (!r.ok) { toast(r.error || '복원 실패', 'err'); return; }
+  _mnTplPath = null;
+  $('#btn-scan-mn-tpl').disabled = true;
+  $('#mn-tpl-scan-result').classList.add('hidden');
   initMinutesTemplateStatus();
   toast('기본 내장 양식으로 복원됐습니다', 'ok');
 }
@@ -2194,6 +2251,7 @@ async function init() {
   initTemplateStatus();
   // 회의록 양식 관리
   $('#btn-pick-mn-tpl').addEventListener('click', pickMinutesTemplate);
+  $('#btn-scan-mn-tpl').addEventListener('click', scanMinutesTemplate);
   $('#btn-reset-mn-tpl').addEventListener('click', resetMinutesTemplate);
   initMinutesTemplateStatus();
 
