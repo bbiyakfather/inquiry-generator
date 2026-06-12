@@ -94,8 +94,8 @@ def _err(msg, **kw):
 
 # ---------- Gemini ----------
 
-def _gemini_json(api_key, model, prompt, schema, timeout):
-    gen = {"temperature": 0.2, "responseMimeType": "application/json"}
+def _gemini_json(api_key, model, prompt, schema, timeout, temperature=0.2):
+    gen = {"temperature": temperature, "responseMimeType": "application/json"}
     if schema:
         gen["responseSchema"] = schema
     payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": gen}
@@ -103,13 +103,31 @@ def _gemini_json(api_key, model, prompt, schema, timeout):
     r = requests.post(url, json=payload, timeout=timeout,
                       headers={"x-goog-api-key": api_key, "Content-Type": "application/json"})
     if r.status_code == 200:
-        data = r.json()
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
-        return {"ok": True, "data": _extract_json(text)}
+        try:
+            data = r.json()
+            text = data["candidates"][0]["content"]["parts"][0]["text"]
+            return {"ok": True, "data": _extract_json(text)}
+        except Exception as e:
+            # 모델이 잘린/비정형 응답을 준 경우 — 일시 현상일 수 있어 재시도 대상
+            return _err(f"응답 파싱 실패: {e}", retryable=True)
     if r.status_code == 404 or (r.status_code == 400 and "not found" in r.text.lower()):
         return _err(_model_msg("Gemini", model), model_error=True, status=r.status_code)
     if r.status_code in (400, 401, 403):
         return _err(_key_msg(r.status_code, r.text), status=r.status_code)
+    if r.status_code == 429:
+        # 응답의 RetryInfo가 권하는 대기 시간을 재시도 힌트로 전달
+        retry_after = 0
+        try:
+            for d in r.json().get("error", {}).get("details", []):
+                if "RetryInfo" in d.get("@type", ""):
+                    retry_after = int(float(d.get("retryDelay", "0s").rstrip("s")))
+        except Exception:
+            pass
+        return _err("무료 사용량 한도 초과(429). 잠시 후 다시 시도하세요.",
+                    status=429, retry_after=retry_after)
+    if r.status_code == 503:
+        return _err("Gemini 서버가 일시적으로 과부하 상태입니다(503). 잠시 후 다시 시도하세요.",
+                    status=503)
     return _err(f"Gemini 오류 (HTTP {r.status_code}): {r.text[:160]}", status=r.status_code)
 
 
@@ -185,17 +203,19 @@ def _key_msg(code, text):
 _RETRY_STATUS = {429, 500, 502, 503, 529}
 
 
-def complete_json(provider, api_key, model, prompt, schema=None, timeout=60):
-    """프로바이더 공통 JSON 응답. 일시 오류(429/5xx)는 대기 후 최대 3회 재시도.
+def complete_json(provider, api_key, model, prompt, schema=None, timeout=60,
+                  temperature=0.2):
+    """프로바이더 공통 JSON 응답. 일시 오류(429/5xx·파싱 실패)는 대기 후 최대 3회 재시도.
 
-    오류 dict에는 status(HTTP 코드)가 실리며, 재시도 판단은 이 코드로만 한다."""
+    오류 dict에는 status(HTTP 코드)가 실리며, 재시도 판단은 status/retryable로만 한다.
+    429 응답이 retry_after(초)를 주면 그 시간(최대 30초)만큼 대기한다."""
     if not api_key:
         return _err(f"{PROVIDER_LABELS.get(provider, provider)} API 키가 없습니다. 설정에서 입력하세요.")
     last = None
     for attempt in range(3):
         try:
             if provider == "gemini":
-                r = _gemini_json(api_key, model, prompt, schema, timeout)
+                r = _gemini_json(api_key, model, prompt, schema, timeout, temperature)
             elif provider == "openai":
                 r = _openai_json(api_key, model, prompt, timeout)
             elif provider == "anthropic":
@@ -210,8 +230,10 @@ def complete_json(provider, api_key, model, prompt, schema=None, timeout=60):
         if r.get("ok"):
             return r
         last = r
-        if r.get("status") in _RETRY_STATUS and attempt < 2:
-            time.sleep(8 * (attempt + 1))
+        if (r.get("status") in _RETRY_STATUS or r.get("retryable")) and attempt < 2:
+            if r.get("status") in _RETRY_STATUS:        # 파싱 실패는 즉시 재시도
+                delay = max(8 * (attempt + 1), int(r.get("retry_after") or 0))
+                time.sleep(min(delay, 30))
             continue
         return r          # 모델/키/요청 오류 — 재시도 무의미
     return last or _err("AI 호출 실패")

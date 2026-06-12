@@ -3,13 +3,15 @@
 
 원칙: AI는 인력 구성·경비 항목·문구만 제안한다. 금액 산정은 전부
 결정론적 계산 엔진(goal-seek)이 수행하므로 AI의 숫자는 '구성 비중 힌트'로만 쓰인다.
-"""
-import json
-import time
 
+HTTP 호출·재시도·오류 매핑은 llm.complete_json(프로바이더 공통)으로 일원화.
+이 모듈은 견적 도메인(스키마·프롬프트·정규화)과 Gemini 모델 목록 조회만 담당한다.
+"""
 import requests
 
-API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+from src.ai import llm
+
+API_BASE = llm.GEMINI_BASE
 
 GRADES = ["책임연구원", "연구원", "연구보조원", "보조원"]
 
@@ -90,10 +92,6 @@ _QUOTE_DATA_TMPL = """## 용역 설명
 """
 
 
-class GeminiError(Exception):
-    pass
-
-
 def build_prompt(description: str, target: int, profit_on: bool,
                  expense_budget: int, price_table: dict, year: str,
                  directive=None) -> str:
@@ -111,12 +109,6 @@ def build_prompt(description: str, target: int, profit_on: bool,
         price_table=", ".join(f"{g} {p:,}원" for g, p in price_table.items()),
         expense_budget=int(expense_budget),
     )
-
-
-def _post(url, payload, api_key, timeout):
-    return requests.post(
-        url, json=payload, timeout=timeout,
-        headers={"x-goog-api-key": api_key, "Content-Type": "application/json"})
 
 
 # 텍스트 생성에 부적합해 드롭다운에서 제외할 모델 키워드 (이미지/음성/임베딩 등)
@@ -161,69 +153,18 @@ def draft_quote(description: str, target: int, profit_on: bool,
                 expense_budget: int, price_table: dict, year: str,
                 api_key: str, model: str = "gemini-flash-latest",
                 timeout: int = 60, directive=None) -> dict:
-    """AI 구성 초안. 반환: {ok, draft?, error?, rationale?}"""
+    """AI 구성 초안. 반환: {ok, draft?, error?, model_error?}"""
     if not api_key:
         return {"ok": False, "error": "Gemini API 키가 설정되지 않았습니다. 설정 화면에서 입력하세요."}
 
     prompt = build_prompt(description, target, profit_on, expense_budget,
                           price_table, year, directive=directive)
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.3,
-            "responseMimeType": "application/json",
-            "responseSchema": RESPONSE_SCHEMA,
-        },
-    }
-    url = f"{API_BASE}/models/{model}:generateContent"
-
-    last_err = ""
-    for attempt in range(3):
-        try:
-            r = _post(url, payload, api_key, timeout)
-        except requests.Timeout:
-            return {"ok": False, "error": f"Gemini 응답 시간 초과({timeout}초)."}
-        except Exception as e:
-            return {"ok": False, "error": f"네트워크 오류: {e}"}
-
-        if r.status_code == 200:
-            try:
-                data = r.json()
-                text = data["candidates"][0]["content"]["parts"][0]["text"]
-                draft = json.loads(text)
-                return {"ok": True, "draft": _normalize(draft)}
-            except Exception as e:
-                last_err = f"응답 파싱 실패: {e}"
-                continue
-        elif r.status_code == 429:
-            delay = 8 * (attempt + 1)
-            try:
-                for d in r.json().get("error", {}).get("details", []):
-                    if "RetryInfo" in d.get("@type", ""):
-                        delay = max(delay, int(float(
-                            d.get("retryDelay", "8s").rstrip("s"))))
-            except Exception:
-                pass
-            if attempt < 2:
-                time.sleep(min(delay, 30))
-                continue
-            last_err = "무료 사용량 한도 초과(429). 잠시 후 다시 시도하세요."
-        elif r.status_code == 503:
-            if attempt < 2:
-                time.sleep(10 * (attempt + 1))
-                continue
-            last_err = "Gemini 서버가 일시적으로 과부하 상태입니다(503). 잠시 후 다시 시도하세요."
-        elif r.status_code == 404 or (r.status_code == 400 and "not found" in r.text.lower()):
-            return {"ok": False, "model_error": True, "error": (
-                f"선택한 AI 모델 '{model}'을(를) 사용할 수 없습니다(종료된 모델일 수 있음).\n"
-                "설정 화면에서 모델을 'Gemini Flash (항상 최신 · 권장)'으로 변경하세요.")}
-        elif r.status_code in (400, 401, 403):
-            return {"ok": False, "error": (
-                f"API 키 또는 요청 오류 (HTTP {r.status_code}). API 키가 올바른지 확인하세요.\n"
-                f"{r.text[:160]}")}
-        else:
-            last_err = f"HTTP {r.status_code}: {r.text[:200]}"
-    return {"ok": False, "error": last_err or "Gemini 호출 실패"}
+    r = llm.complete_json("gemini", api_key, model, prompt,
+                          schema=RESPONSE_SCHEMA, timeout=timeout,
+                          temperature=0.3)
+    if not r.get("ok"):
+        return r
+    return {"ok": True, "draft": _normalize(r["data"])}
 
 
 def _normalize(draft: dict) -> dict:

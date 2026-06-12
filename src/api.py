@@ -775,7 +775,8 @@ class Api:
                field_map, unmapped, fieldmap_path?, ai_used, ai_error?}
         """
         try:
-            from src.ai.template_mapper import map_unknown_fields, save_fieldmap
+            from src.ai.template_mapper import (map_unknown_fields, save_fieldmap,
+                                                load_fieldmap)
             if not os.path.exists(hwp_path):
                 return _err(f"파일을 찾을 수 없습니다: {hwp_path}")
 
@@ -813,8 +814,10 @@ class Api:
             result["field_map"] = map_r.get("field_map", {})
             result["unmapped"] = map_r.get("unmapped", scan["unknown"])
 
-            fm_path = save_fieldmap(hwp_path, scan, map_r)
-            result["fieldmap_path"] = fm_path
+            # AI 매핑 실패 시 기존 정상 캐시를 빈 매핑으로 덮어쓰지 않는다
+            # (재스캔 중 일시 오류·쿼터 초과로 좋은 매핑이 유실되는 것 방지)
+            if map_r.get("ok") or not load_fieldmap(hwp_path):
+                result["fieldmap_path"] = save_fieldmap(hwp_path, scan, map_r)
             return result
         except Exception as e:
             return _err(e, traceback=traceback.format_exc())
@@ -943,7 +946,8 @@ class Api:
         info["template"] = os.path.exists(TEMPLATE_DEFAULT)
         _prov = cs.get_provider(self.cfg)
         info["ai_provider"] = _prov
-        info["gemini_key"] = bool(cs.get_ai_key(self.cfg, _prov))
+        info["ai_provider_label"] = ai_llm.PROVIDER_LABELS.get(_prov, _prov)
+        info["ai_key"] = bool(cs.get_ai_key(self.cfg, _prov))
         info["folder"] = self._doc_folder("quote")
         info["folder_ok"] = os.path.isdir(info["folder"]) if info["folder"] else False
         try:
@@ -1184,7 +1188,8 @@ class Api:
         try:
             from src.scan.hwpx_scan import scan_hwpx_grid
             from src.ai.minutes_template_mapper import (
-                map_minutes_cells, save_minutes_fieldmap, MINUTES_SLOTS)
+                map_minutes_cells, save_minutes_fieldmap, load_minutes_fieldmap,
+                is_standard_map, MINUTES_SLOTS)
             if not os.path.isfile(hwpx_path):
                 return _err(f"파일을 찾을 수 없습니다: {hwpx_path}")
 
@@ -1202,14 +1207,14 @@ class Api:
                 "cell_map": map_r.get("cell_map", {}),
                 "unmapped": map_r.get("unmapped", []),
                 "slot_labels": MINUTES_SLOTS,
+                "is_standard": is_standard_map(map_r.get("cell_map", {})),
             }
             if not map_r.get("ok"):
                 result["ai_error"] = map_r.get("error", "")
 
-            fm_path = save_minutes_fieldmap(hwpx_path, map_r)
-            result["fieldmap_path"] = fm_path
-            from src.ai.minutes_template_mapper import load_minutes_fieldmap
-            result["is_standard"] = load_minutes_fieldmap(hwpx_path).get("is_standard", False)
+            # AI 실패 시 기존 정상 캐시 보호 (scan_template와 동일 규칙)
+            if map_r.get("ok") or not load_minutes_fieldmap(hwpx_path):
+                result["fieldmap_path"] = save_minutes_fieldmap(hwpx_path, map_r)
             return result
         except Exception as e:
             return _err(e, traceback=traceback.format_exc())
@@ -1225,7 +1230,7 @@ class Api:
             )
             if result:
                 return {"ok": True, "path": result[0]}
-            return {"ok": True, "cancelled": True}
+            return {"ok": False, "cancelled": True}
         except Exception as e:
             return _err(e)
 

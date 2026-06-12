@@ -339,28 +339,32 @@ function parseLeadingNum(s) {
   return isNaN(v) ? null : v;
 }
 
-/* 경비 표 렌더 (엑셀형: 구분 | 내역 | 수량 | 단가 | 금액 | 삭제) */
-function renderExpenseRows() {
-  const wrap = $('#exp-list');
-  if (!state.quote.expenses.length) {
-    wrap.innerHTML = `<div class="exp-empty">경비 항목이 없습니다. ＋ 항목 추가를 눌러 입력하세요.</div>`;
-    return;
-  }
-  const rows = state.quote.expenses.map((e, i) => `
+/* 경비 표 마크업 (엑셀형: 구분 | 내역 | 수량 | 단가 | 금액 | 삭제) —
+   편집기(#exp-list)와 AI 검토표(#ai-exp)가 amt/del 속성명만 달리해 공용 사용 */
+function expTableHTML(exps, amtAttr, delAttr) {
+  const rows = exps.map((e, i) => `
     <tr>
       <td><input class="x-name" data-i="${i}" data-k="name" value="${esc(e.name)}" placeholder="전문가 활용비"></td>
       <td><textarea class="x-detail" data-i="${i}" data-k="details" rows="2" placeholder="- 시장참여자 검증/자문&#10;- 인허가 계획 자문">${esc((Array.isArray(e.details) ? e.details : []).join('\n'))}</textarea></td>
       <td><input class="x-qty" data-i="${i}" data-k="qty_text" value="${esc(e.qty_text)}" placeholder="5명/1식/-"></td>
       <td><input data-i="${i}" data-k="unit_price" value="${commafy(e.unit_price)}" placeholder="0"></td>
-      <td class="x-amt" data-expamt="${i}">-</td>
-      <td class="x-del"><button class="x-del-btn" data-del="${i}" title="이 경비 삭제" aria-label="경비 삭제">×</button></td>
+      <td class="x-amt" ${amtAttr}="${i}">-</td>
+      <td class="x-del"><button class="x-del-btn" ${delAttr}="${i}" type="button" title="이 경비 삭제" aria-label="경비 삭제">×</button></td>
     </tr>`).join('');
-  wrap.innerHTML = `
+  return `
     <table class="exp-table">
       <colgroup><col style="width:17%"><col><col style="width:11%"><col style="width:16%"><col style="width:15%"><col style="width:40px"></colgroup>
       <thead><tr><th>구분</th><th>내역 (한 줄에 하나씩, '- ' 시작)</th><th class="c">수량</th><th class="r">단가(원)</th><th class="r">금액(원)</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
+}
+
+const EXP_EMPTY_HTML = `<div class="exp-empty">경비 항목이 없습니다. ＋ 항목 추가를 눌러 입력하세요.</div>`;
+
+function renderExpenseRows() {
+  const wrap = $('#exp-list');
+  if (!state.quote.expenses.length) { wrap.innerHTML = EXP_EMPTY_HTML; return; }
+  wrap.innerHTML = expTableHTML(state.quote.expenses, 'data-expamt', 'data-del');
   $$('#exp-list input, #exp-list textarea').forEach(inp => inp.addEventListener('input', onExpenseInput));
   $$('#exp-list input[data-k="unit_price"]').forEach(inp =>
     inp.addEventListener('blur', ev => { ev.target.value = commafy(parseMoney(ev.target.value)); }));
@@ -529,34 +533,30 @@ function switchInput(sel) { const e = $(sel); if (e) e.focus(); }
 let aiState = null;        // { desc, target, profit, draft, rationale, warnings }
 let _aiCalcTimer = null;
 let aiAttachments = [];    // [{ name, markdown, chars }]
-let _convertStatusReady = false;   // true = node+kordoc 모두 사용 가능
 
-/* ===== 변환 엔진 상태 + 드롭존 ===== */
-async function refreshConvertStatus() {
-  const r = await call('convert_status');
-  _convertStatusReady = !!(r && r.ready);
-  const dz = $('#ai-dropzone');
-  const banner = $('#ai-node-banner');
+/* ===== 변환 엔진 상태 + 드롭존 (견적 AI·회의록 공용) ===== */
+function setDropzoneState(dzSel, bannerSel, r) {
+  const dz = $(dzSel);
   if (!dz) return;
-  if (r && r.state === 'node_missing') {
-    dz.classList.add('dz-disabled');
-    if (banner) banner.classList.remove('hidden');
-  } else {
-    dz.classList.remove('dz-disabled');
-    if (banner) banner.classList.add('hidden');
-  }
+  const off = !!(r && r.state === 'node_missing');
+  dz.classList.toggle('dz-disabled', off);
+  const banner = $(bannerSel);
+  if (banner) banner.classList.toggle('hidden', !off);
 }
 
-/* JS-side dragover/enter/leave/drop handlers (M4 배선).
-   dragover preventDefault 없이는 drop 이벤트가 발생하지 않는다. */
-function wireDropzoneJS() {
-  const dz = $('#ai-dropzone');
+async function refreshConvertStatus() {
+  const r = await call('convert_status');
+  setDropzoneState('#ai-dropzone', '#ai-node-banner', r);
+  setDropzoneState('#minutes-dropzone', '#mn-node-banner', r);
+}
+
+/* JS-side dragover/enter/leave/drop 배선.
+   dragover preventDefault 없이는 drop 이벤트가 발생하지 않는다.
+   순수 JS 드롭은 파일 경로를 얻을 수 없으므로 안내만 하고,
+   실제 경로는 pywebview 핸들러(onNativeFilesDropped)가 통지한다. */
+function wireDropzone(sel) {
+  const dz = $(sel);
   if (!dz) return;
-
-  // 전역 drop 차단 — 드롭존 밖 드롭이 브라우저 파일 열기로 넘어가는 것 방지
-  document.addEventListener('dragover', e => e.preventDefault());
-  document.addEventListener('drop', e => e.preventDefault());
-
   dz.addEventListener('dragenter', e => {
     e.preventDefault();
     if (!dz.classList.contains('dz-disabled')) dz.classList.add('drag-over');
@@ -569,15 +569,18 @@ function wireDropzoneJS() {
   dz.addEventListener('drop', e => {
     e.preventDefault();
     dz.classList.remove('drag-over');
-    // 순수 JS 드롭(브라우저 내): 파일 경로는 얻을 수 없으므로
-    // 이름만 수집 후 파일선택 안내. 실제 경로는 pywebview 핸들러가 통지.
-    const files = Array.from(e.dataTransfer?.files || []);
-    if (files.length) {
-      // pywebview DnD라면 onNativeFilesDropped가 이미 불렸을 것.
-      // 여기선 이름만으로 칩 표시 → 경로 없으면 사용자에게 안내
+    if (e.dataTransfer?.files?.length) {
       toast('파일 경로를 확인할 수 없습니다. [파일 선택…] 버튼을 이용해 주세요.', 'warn', 4000);
     }
   });
+}
+
+function wireDropzones() {
+  // 전역 drop 차단 — 드롭존 밖 드롭이 브라우저 파일 열기로 넘어가는 것 방지
+  document.addEventListener('dragover', e => e.preventDefault());
+  document.addEventListener('drop', e => e.preventDefault());
+  wireDropzone('#ai-dropzone');
+  wireDropzone('#minutes-dropzone');
 }
 
 /* Python → JS 드롭 통지 (api.py _on_drop → evaluate_js) */
@@ -601,69 +604,65 @@ window.__convertProgress = function(info) {
   }
 };
 
-async function handleDroppedPaths(paths) {
+/* 파일 → Markdown 변환 후 첨부 목록에 누적 (견적 AI·회의록 공용) */
+async function convertInto(paths, attachments, renderFn) {
   if (!paths || !paths.length) return;
   overlay(true, '변환 준비 중...');
-  await convertPaths(paths);
-  overlay(false);
-}
-
-async function convertPaths(paths) {
   const r = await call('convert_files', paths);
   overlay(false);
   if (!r.ok) {
-    const code = r.error_code || '';
-    if (code === 'node_missing') {
-      toast('Node.js가 설치되지 않아 변환할 수 없습니다.', 'err', 5000);
-    } else {
-      toast(r.error || '변환 실패', 'err', 5000);
-    }
+    toast(r.error_code === 'node_missing'
+      ? 'Node.js가 설치되지 않아 변환할 수 없습니다.'
+      : (r.error || '변환 실패'), 'err', 5000);
     return;
   }
   if (r.installed_now) toast('변환 도구 준비 완료. HWP·PDF·DOCX 변환을 사용할 수 있습니다.', 'ok', 4000);
   for (const res of r.results || []) {
     if (res.ok) {
-      const existing = aiAttachments.findIndex(a => a.name === res.name);
-      if (existing >= 0) aiAttachments[existing] = { name: res.name, markdown: res.markdown, chars: res.chars };
-      else aiAttachments.push({ name: res.name, markdown: res.markdown, chars: res.chars });
+      const item = { name: res.name, markdown: res.markdown, chars: res.chars };
+      const i = attachments.findIndex(a => a.name === res.name);
+      if (i >= 0) attachments[i] = item; else attachments.push(item);
     } else {
       toast(`변환 실패: ${res.name} — ${res.error || res.error_code || ''}`, 'err', 5000);
     }
   }
-  renderAIChips();
+  renderFn();
 }
 
-function renderAIChips() {
-  const wrap = $('#ai-chips');
-  const preview = $('#ai-md-preview');
+const handleDroppedPaths = (paths) => convertInto(paths, aiAttachments, renderAIChips);
+
+/* 첨부 칩 렌더 (견적 AI·회의록 공용 — previewSel 있으면 미리보기 버튼 노출) */
+function renderChips(wrapSel, items, opts = {}) {
+  const wrap = $(wrapSel);
   if (!wrap) return;
-  if (!aiAttachments.length) {
+  const preview = opts.previewSel ? $(opts.previewSel) : null;
+  if (!items.length) {
     wrap.classList.add('hidden');
     wrap.innerHTML = '';
     if (preview) { preview.classList.add('hidden'); preview.textContent = ''; }
     return;
   }
   wrap.classList.remove('hidden');
-  wrap.innerHTML = aiAttachments.map((a, i) => `
+  wrap.innerHTML = items.map((a, i) => `
     <span class="ai-chip chip-ok" data-idx="${i}">
       <span class="chip-name" title="${esc(a.name)}">📄 ${esc(a.name)}</span>
       <span class="chip-sub">${(a.chars || 0).toLocaleString()}자</span>
-      <button class="chip-preview-btn" data-idx="${i}" type="button" title="미리보기">👁</button>
+      ${preview ? `<button class="chip-preview-btn" data-idx="${i}" type="button" title="미리보기">👁</button>` : ''}
       <button class="chip-rm" data-idx="${i}" type="button" title="제거">✕</button>
     </span>`).join('');
 
   wrap.querySelectorAll('.chip-rm').forEach(btn => {
     btn.addEventListener('click', e => {
-      const idx = +e.currentTarget.dataset.idx;
-      aiAttachments.splice(idx, 1);
-      renderAIChips();
+      items.splice(+e.currentTarget.dataset.idx, 1);
+      renderChips(wrapSel, items, opts);
     });
   });
+  if (!preview) return;
   wrap.querySelectorAll('.chip-preview-btn').forEach(btn => {
     btn.addEventListener('click', e => {
       const idx = +e.currentTarget.dataset.idx;
-      const a = aiAttachments[idx];
-      if (!preview || !a) return;
+      const a = items[idx];
+      if (!a) return;
       if (preview.dataset.idx === String(idx) && !preview.classList.contains('hidden')) {
         preview.classList.add('hidden');
         preview.dataset.idx = '';
@@ -675,6 +674,8 @@ function renderAIChips() {
     });
   });
 }
+
+const renderAIChips = () => renderChips('#ai-chips', aiAttachments, { previewSel: '#ai-md-preview' });
 
 function openAIModal() {
   const prov = (state.config && state.config.ai_provider) || 'gemini';
@@ -805,29 +806,12 @@ function onAILaborInput(e) {
   aiRecalc();
 }
 
-/* 경비 검토표 (.exp-table 재사용) */
+/* 경비 검토표 (expTableHTML 재사용) */
 function renderAIExp() {
   const wrap = $('#ai-exp');
   const exps = aiState.draft.expenses;
-  if (!exps.length) {
-    wrap.innerHTML = `<div class="exp-empty">경비 항목이 없습니다. ＋ 항목 추가를 눌러 입력하세요.</div>`;
-    return;
-  }
-  const rows = exps.map((e, i) => `
-    <tr>
-      <td><input class="x-name" data-i="${i}" data-k="name" value="${esc(e.name)}" placeholder="전문가 활용비"></td>
-      <td><textarea class="x-detail" data-i="${i}" data-k="details" rows="2" placeholder="- 시장참여자 검증/자문">${esc((Array.isArray(e.details) ? e.details : []).join('\n'))}</textarea></td>
-      <td><input class="x-qty" data-i="${i}" data-k="qty_text" value="${esc(e.qty_text)}" placeholder="5명/1식/-"></td>
-      <td><input data-i="${i}" data-k="unit_price" value="${commafy(e.unit_price)}" placeholder="0"></td>
-      <td class="x-amt" data-aiexpamt="${i}">-</td>
-      <td class="x-del"><button class="x-del-btn" data-aidel="${i}" type="button" title="이 경비 삭제" aria-label="경비 삭제">×</button></td>
-    </tr>`).join('');
-  wrap.innerHTML = `
-    <table class="exp-table">
-      <colgroup><col style="width:17%"><col><col style="width:11%"><col style="width:16%"><col style="width:15%"><col style="width:40px"></colgroup>
-      <thead><tr><th>구분</th><th>내역 (한 줄에 하나씩, '- ' 시작)</th><th class="c">수량</th><th class="r">단가(원)</th><th class="r">금액(원)</th><th></th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>`;
+  if (!exps.length) { wrap.innerHTML = EXP_EMPTY_HTML; return; }
+  wrap.innerHTML = expTableHTML(exps, 'data-aiexpamt', 'data-aidel');
   $$('#ai-exp input, #ai-exp textarea').forEach(inp => inp.addEventListener('input', onAIExpInput));
   $$('#ai-exp input[data-k="unit_price"]').forEach(inp =>
     inp.addEventListener('blur', ev => { ev.target.value = commafy(parseMoney(ev.target.value)); }));
@@ -1269,7 +1253,7 @@ async function runDiagnose() {
     diagLine('한글(HWP) COM 등록', r.hwp_com, r.hwp_com ? '사용 가능' : '미등록') +
     diagLine('보안 모듈(FilePathChecker)', r.security_module, r.security_module ? '등록됨' : '미등록 — 첫 생성 시 자동 등록') +
     diagLine('견적서 템플릿', r.template, r.template ? '존재' : '없음 — make_template 실행 필요') +
-    diagLine('Gemini API 키', r.gemini_key ? true : 'warn', r.gemini_key ? '등록됨' : '미등록 (AI 비활성)') +
+    diagLine(`AI API 키 (${r.ai_provider_label || r.ai_provider || '?'})`, r.ai_key ? true : 'warn', r.ai_key ? '등록됨' : '미등록 (AI 비활성)') +
     diagLine('Google Drive', r.drive_connected ? true : 'warn', r.drive_connected ? '연결됨' : '미연결') +
     diagLine('작업 폴더', r.folder_ok ? true : 'warn', r.folder || '미선택') +
     diagLine('Node.js (문서 변환)', r.node ? true : 'warn', r.node ? `${r.node_bundled ? '내장됨' : '설치됨'} (${r.node})` : '런타임 없음') +
@@ -1748,75 +1732,10 @@ async function reEditMinutes(jsonPath) {
 let minutesAttachments = [];  // [{ name, markdown, chars }]
 let minutesDraft = null;      // 검토 중인 MINUTES_SCHEMA 초안
 
-/* 회의록 드롭존 상태 (ai 드롭존과 동일 패턴) */
-async function refreshMinutesConvertStatus() {
-  const r = await call('convert_status');
-  const dz = $('#minutes-dropzone');
-  const banner = $('#mn-node-banner');
-  if (!dz) return;
-  if (r && r.state === 'node_missing') {
-    dz.classList.add('dz-disabled');
-    if (banner) banner.classList.remove('hidden');
-  } else {
-    dz.classList.remove('dz-disabled');
-    if (banner) banner.classList.add('hidden');
-  }
-}
-
-function wireMinutesDropzone() {
-  const dz = $('#minutes-dropzone');
-  if (!dz) return;
-  dz.addEventListener('dragenter', e => { e.preventDefault(); if (!dz.classList.contains('dz-disabled')) dz.classList.add('drag-over'); });
-  dz.addEventListener('dragover',  e => { e.preventDefault(); if (!dz.classList.contains('dz-disabled')) dz.classList.add('drag-over'); });
-  dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
-  dz.addEventListener('drop', e => {
-    e.preventDefault(); dz.classList.remove('drag-over');
-    if (e.dataTransfer?.files?.length) toast('파일 경로를 확인할 수 없습니다. [파일 선택…] 버튼을 이용해 주세요.', 'warn', 4000);
-  });
-}
-
-async function handleMinutesDroppedPaths(paths) {
-  if (!paths || !paths.length) return;
-  overlay(true, '변환 준비 중...');
-  await convertPathsForMinutes(paths);
-  overlay(false);
-}
-
-async function convertPathsForMinutes(paths) {
-  const r = await call('convert_files', paths);
-  overlay(false);
-  if (!r.ok) {
-    toast(r.error || '변환 실패', 'err', 5000);
-    return;
-  }
-  if (r.installed_now) toast('변환 도구 준비 완료. HWP·PDF·DOCX 변환을 사용할 수 있습니다.', 'ok', 4000);
-  for (const res of r.results || []) {
-    if (res.ok) {
-      const ex = minutesAttachments.findIndex(a => a.name === res.name);
-      if (ex >= 0) minutesAttachments[ex] = { name: res.name, markdown: res.markdown, chars: res.chars };
-      else minutesAttachments.push({ name: res.name, markdown: res.markdown, chars: res.chars });
-    } else {
-      toast(`변환 실패: ${res.name} — ${res.error || ''}`, 'err', 5000);
-    }
-  }
-  renderMinutesChips();
-}
-
-function renderMinutesChips() {
-  const wrap = $('#mn-chips');
-  if (!wrap) return;
-  if (!minutesAttachments.length) { wrap.classList.add('hidden'); wrap.innerHTML = ''; return; }
-  wrap.classList.remove('hidden');
-  wrap.innerHTML = minutesAttachments.map((a, i) => `
-    <span class="ai-chip chip-ok" data-idx="${i}">
-      <span class="chip-name" title="${esc(a.name)}">📄 ${esc(a.name)}</span>
-      <span class="chip-sub">${(a.chars || 0).toLocaleString()}자</span>
-      <button class="chip-rm" data-idx="${i}" type="button" title="제거">✕</button>
-    </span>`).join('');
-  wrap.querySelectorAll('.chip-rm').forEach(btn => btn.addEventListener('click', e => {
-    minutesAttachments.splice(+e.currentTarget.dataset.idx, 1); renderMinutesChips();
-  }));
-}
+/* 드롭존 상태·배선·변환·칩 렌더는 견적 AI와 공용 헬퍼 사용
+   (setDropzoneState / wireDropzone / convertInto / renderChips) */
+const handleMinutesDroppedPaths = (paths) => convertInto(paths, minutesAttachments, renderMinutesChips);
+const renderMinutesChips = () => renderChips('#mn-chips', minutesAttachments);
 
 function setMnStatus(msg, kind) {
   const box = $('#mn-status');
@@ -1960,7 +1879,7 @@ function initMinutesView() {
   renderMinutesChips();
   setMnStatus('');
   showMinutesStep(1);
-  refreshMinutesConvertStatus();
+  refreshConvertStatus();
 }
 
 /* ===================================================================
@@ -1983,6 +1902,14 @@ function _setUpdateStatus(msg, opts = {}) {
 function _hideUpdateBanner() {
   const banner = $('#update-banner');
   if (banner) banner.setAttribute('hidden', '');
+}
+
+/* 설정 탭·배너의 [지금 업데이트] 버튼 상태 일괄 변경 */
+function _setUpdateButtons(disabled, label) {
+  ['#btn-do-update', '#update-banner-go'].forEach(sel => {
+    const b = $(sel);
+    if (b) { b.disabled = disabled; b.textContent = label; }
+  });
 }
 
 function _showUpdateBanner(info) {
@@ -2011,19 +1938,12 @@ async function startUpdateFlow(info) {
     toast('다운로드 링크를 찾을 수 없습니다.', 'err');
     return;
   }
-  // 버튼 비활성화
-  ['#btn-do-update', '#update-banner-go'].forEach(sel => {
-    const b = $(sel);
-    if (b) { b.disabled = true; b.textContent = '준비 중…'; }
-  });
+  _setUpdateButtons(true, '준비 중…');
 
   const r = await call('start_update', info.asset_url, info.asset_size || 0);
   if (!r.ok) {
     toast(r.error || '업데이트 시작 실패', 'err');
-    ['#btn-do-update', '#update-banner-go'].forEach(sel => {
-      const b = $(sel);
-      if (b) { b.disabled = false; b.textContent = '지금 업데이트'; }
-    });
+    _setUpdateButtons(false, '지금 업데이트');
     return;
   }
 
@@ -2052,20 +1972,14 @@ async function startUpdateFlow(info) {
       if (!ar.ok) {
         toast(`업데이트 적용 실패: ${ar.error || ''}`, 'err');
         _setUpdateStatus(`적용 실패: ${ar.error || ''}`, { banner: `적용 실패: ${ar.error || ''}` });
-        ['#btn-do-update', '#update-banner-go'].forEach(sel => {
-          const b = $(sel);
-          if (b) { b.disabled = false; b.textContent = '지금 업데이트'; }
-        });
+        _setUpdateButtons(false, '지금 업데이트');
       }
       // 성공 시 앱이 곧 종료/재실행되므로 추가 처리 없음
     } else if (phase === 'error') {
       clearInterval(_updatePollId);
       _updatePollId = null;
       toast(`업데이트 실패: ${s.error || ''}`, 'err');
-      ['#btn-do-update', '#update-banner-go'].forEach(sel => {
-        const b = $(sel);
-        if (b) { b.disabled = false; b.textContent = '지금 업데이트'; }
-      });
+      _setUpdateButtons(false, '지금 업데이트');
     }
   }, 800);
 }
@@ -2111,7 +2025,13 @@ async function checkUpdateSilently() {
 /* ===================================================================
    초기화 / 이벤트 바인딩
 =================================================================== */
+let _inited = false;
+
 async function init() {
+  // pywebviewready 이벤트와 2초 폴백 타이머가 겹쳐도 1회만 실행
+  // (이중 실행 시 모든 버튼 리스너가 중복 바인딩 → 생성·저장이 2번 수행됨)
+  if (_inited) return;
+  _inited = true;
   const r = await call('get_config');
   if (r.ok) state.config = r.config;
 
@@ -2201,8 +2121,7 @@ async function init() {
     const r = await call('pick_convert_files');
     if (r && r.ok && r.paths && r.paths.length) await handleDroppedPaths(r.paths);
   });
-  wireDropzoneJS();
-  wireMinutesDropzone();
+  wireDropzones();
   $('#ai-confirm').addEventListener('click', confirmAIDraft);
   $('#ai-add-exp').addEventListener('click', aiAddExp);
   $('#ai-auto-no').addEventListener('click', async () => {
@@ -2313,6 +2232,6 @@ if (window.pywebview && window.pywebview.api) {
   init();
 } else {
   window.addEventListener('pywebviewready', init);
-  // 폴백: 2초 내 미준비 시 강제 시도
-  setTimeout(() => { if (!state.config) init(); }, 2000);
+  // 폴백: 2초 내 미준비 시 강제 시도 (init 자체가 1회 실행을 보장)
+  setTimeout(init, 2000);
 }

@@ -10,9 +10,7 @@
 
 __version__ = "1.2.3"
 
-# 자동 업데이트가 조회할 GitHub 저장소 ("owner/repo").
-# [확인 필요] 실제 저장소 개설 후 채울 것 — 비어 있으면 업데이트 확인 시 안내 메시지 반환.
-# config.json 의 "update_repo" 값으로도 덮어쓸 수 있다 (코드 수정 없이 변경 가능).
+# 자동 업데이트가 조회할 GitHub 저장소 ("owner/repo"). 공개 저장소 전제.
 GITHUB_REPO = "hikim1410-commits/inquiry-generator"
 
 

@@ -205,21 +205,12 @@ def _scan_fields_com(hwp, hwp_path: str) -> dict:
 
 
 def _standard_field_set(max_labor=MAX_LABOR, max_exp=MAX_EXP) -> set:
-    """표준 필드명 전체 집합."""
-    s = {"recv", "quote_no", "ref_name", "ref_tel", "quote_date",
-         "sup_name", "sup_reg_no", "sup_ceo", "sup_address",
-         "sup_biz_type", "sup_biz_item",
-         "sup_manager", "sup_tel", "sup_email", "sup_fax",
-         "svc_name", "svc_period", "amount_kor",
-         "labor_sum_amt", "labor_sum_ratio",
-         "exp_sum_amt", "exp_sum_ratio",
-         "subtotal_amt", "subtotal_ratio",
-         "mgmt_basis", "mgmt_amt", "mgmt_ratio",
-         "profit_basis", "profit_amt", "profit_ratio",
-         "supply_amt", "supply_ratio",
-         "vat_basis", "vat_amt", "vat_ratio",
-         "trim_label", "trim_basis", "trim_amt", "trim_ratio",
-         "final_amt", "final_ratio"}
+    """표준 필드명 전체 집합.
+
+    비연번 필드 목록의 단일 출처는 AI 매핑 카탈로그(STANDARD_CATALOG) —
+    새 표준 필드 추가 시 카탈로그에만 넣으면 스캔 대조와 AI 매핑이 함께 갱신된다."""
+    from src.ai.template_mapper import STANDARD_CATALOG
+    s = set(STANDARD_CATALOG)
     for i in range(1, max_labor + 1):
         s |= {f"labor{i}_{x}" for x in
               ("grade", "cnt", "price", "months", "rate", "amt", "ratio")}

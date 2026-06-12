@@ -74,13 +74,14 @@ class TestNormalizeServiceName:
 
 
 class TestGeminiErrorMapping:
+    # gemini.draft_quote는 llm.complete_json을 경유하므로 HTTP는 llm.requests를 모킹
     _ARGS = dict(description="기술 마케팅 및 수요기업 발굴 용역입니다",
                  target=19000000, profit_on=True, expense_budget=5000000,
                  price_table={"책임연구원": 7567456}, year="2026", api_key="FAKE")
 
     def test_404_is_model_error_korean(self):
         fake = mock.Mock(status_code=404)
-        with mock.patch.object(gemini.requests, "post", return_value=fake):
+        with mock.patch.object(llm.requests, "post", return_value=fake):
             r = gemini.draft_quote(model="gemini-2.5-flash", **self._ARGS)
         assert r["ok"] is False
         assert r.get("model_error") is True
@@ -88,14 +89,14 @@ class TestGeminiErrorMapping:
 
     def test_400_not_found_is_model_error(self):
         fake = mock.Mock(status_code=400, text="models/x is not found for API version")
-        with mock.patch.object(gemini.requests, "post", return_value=fake):
+        with mock.patch.object(llm.requests, "post", return_value=fake):
             r = gemini.draft_quote(model="bad", **self._ARGS)
         assert r["ok"] is False
         assert r.get("model_error") is True
 
     def test_403_is_key_error_not_model(self):
         fake = mock.Mock(status_code=403, text="permission denied")
-        with mock.patch.object(gemini.requests, "post", return_value=fake):
+        with mock.patch.object(llm.requests, "post", return_value=fake):
             r = gemini.draft_quote(**self._ARGS)
         assert r["ok"] is False
         assert not r.get("model_error")

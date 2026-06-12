@@ -97,7 +97,7 @@ def map_minutes_cells(grid_cells: list, provider: str = "gemini",
     return {"ok": True, "cell_map": cell_map, "unmapped": unmapped}
 
 
-def _is_standard(cell_map: dict) -> bool:
+def is_standard_map(cell_map: dict) -> bool:
     """cell_map 이 표준 양식 좌표(DEFAULT_CELLS)와 완전히 동일하면 True."""
     if set(cell_map.keys()) != set(DEFAULT_CELLS.keys()):
         return False
@@ -132,7 +132,7 @@ def save_minutes_fieldmap(template_path: str, map_result: dict) -> str:
     data = {
         "version": 1,
         "template": os.path.basename(template_path),
-        "is_standard": _is_standard(cell_map),
+        "is_standard": is_standard_map(cell_map),
         "cell_map": cell_map,
         "unmapped": map_result.get("unmapped", []),
     }

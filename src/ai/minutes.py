@@ -1,17 +1,10 @@
 # -*- coding: utf-8 -*-
 """회의록 AI 초안 생성 — MINUTES_SCHEMA / 프롬프트 / 정규화.
 
-멀티 프로바이더(Gemini + OpenAI/Anthropic)를 지원한다.
-Gemini는 gemini.py의 _post/_gemini_json 패턴을 그대로 재사용하고,
-나머지는 llm.complete_json(schema=MINUTES_SCHEMA)을 경유한다.
+멀티 프로바이더(Gemini/OpenAI/Anthropic) 공통으로 llm.complete_json
+(schema=MINUTES_SCHEMA)을 경유한다. HTTP·재시도·오류 매핑은 llm이 담당.
 """
-import json
-import time
-
-import requests
-
-from src.ai.llm import (GEMINI_BASE, complete_json, PROVIDER_LABELS,
-                        _extract_json)
+from src.ai.llm import complete_json, PROVIDER_LABELS
 
 # ── 스키마 ─────────────────────────────────────────────────────────────────────
 
@@ -140,63 +133,6 @@ def _normalize_minutes(data: dict) -> dict:
     return out
 
 
-# ── Gemini 직접 경로 ───────────────────────────────────────────────────────────
-
-def _draft_gemini(description: str, api_key: str, model: str, timeout: int,
-                  directive=None) -> dict:
-    prompt = build_minutes_prompt(description, directive=directive)
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.2,
-            "responseMimeType": "application/json",
-            "responseSchema": MINUTES_SCHEMA,
-        },
-    }
-    url = f"{GEMINI_BASE}/models/{model}:generateContent"
-
-    last_err = ""
-    for attempt in range(3):
-        try:
-            r = requests.post(
-                url, json=payload, timeout=timeout,
-                headers={"x-goog-api-key": api_key, "Content-Type": "application/json"})
-        except requests.Timeout:
-            return {"ok": False, "error": f"Gemini 응답 시간 초과({timeout}초)."}
-        except Exception as e:
-            return {"ok": False, "error": f"네트워크 오류: {e}"}
-
-        if r.status_code == 200:
-            try:
-                text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
-                draft = _extract_json(text)
-                return {"ok": True, "draft": _normalize_minutes(draft)}
-            except Exception as e:
-                last_err = f"응답 파싱 실패: {e}"
-                continue
-        elif r.status_code == 429:
-            delay = 8 * (attempt + 1)
-            if attempt < 2:
-                time.sleep(min(delay, 30))
-                continue
-            last_err = "무료 사용량 한도 초과(429). 잠시 후 다시 시도하세요."
-        elif r.status_code == 503:
-            if attempt < 2:
-                time.sleep(10 * (attempt + 1))
-                continue
-            last_err = "Gemini 서버가 일시적으로 과부하 상태입니다(503)."
-        elif r.status_code == 404 or (r.status_code == 400 and "not found" in r.text.lower()):
-            return {"ok": False, "model_error": True, "error": (
-                f"선택한 AI 모델 '{model}'을(를) 사용할 수 없습니다.\n"
-                "설정 화면에서 모델을 변경하세요.")}
-        elif r.status_code in (400, 401, 403):
-            return {"ok": False, "error": (
-                f"API 키 또는 요청 오류 (HTTP {r.status_code}).\n{r.text[:160]}")}
-        else:
-            last_err = f"HTTP {r.status_code}: {r.text[:200]}"
-    return {"ok": False, "error": last_err or "Gemini 호출 실패"}
-
-
 # ── 공개 API ─────────────────────────────────────────────────────────────────
 
 def draft_minutes(provider: str, description: str, api_key: str, model: str,
@@ -207,9 +143,6 @@ def draft_minutes(provider: str, description: str, api_key: str, model: str,
     if not api_key:
         label = PROVIDER_LABELS.get(provider, provider)
         return {"ok": False, "error": f"{label} API 키가 설정되지 않았습니다. 설정 화면에서 입력하세요."}
-
-    if provider == "gemini":
-        return _draft_gemini(description, api_key, model, timeout, directive=directive)
 
     prompt = build_minutes_prompt(description, directive=directive)
     r = complete_json(provider, api_key, model, prompt,

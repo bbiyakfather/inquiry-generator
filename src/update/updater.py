@@ -23,8 +23,6 @@ from src.version import GITHUB_REPO, __version__, is_newer
 # ── 전역 상태 (스레드 세이프) ──────────────────────────────────────────────────
 _lock = threading.Lock()
 _state: dict = {"phase": "idle", "pct": 0, "msg": "", "error": ""}
-# 마지막 check_latest 결과를 캐시 (start/apply 시 재사용)
-_last_check: dict = {}
 
 
 def _set(**kw):
@@ -44,8 +42,6 @@ def check_latest(timeout: int = 15) -> dict:
     반환 dict:
       ok, latest_tag, has_update, notes, asset_url, asset_name, asset_size
     """
-    global _last_check
-
     repo = GITHUB_REPO.strip()
     if not repo:
         return {"ok": False, "error": "GITHUB_REPO가 설정되지 않았습니다 (src/version.py 참조)."}
@@ -85,18 +81,15 @@ def check_latest(timeout: int = 15) -> dict:
             asset_size = asset.get("size", 0)
             break
 
-    has_upd = bool(tag and is_newer(tag))
-    result = {
+    return {
         "ok": True,
         "latest_tag": tag,
-        "has_update": has_upd,
+        "has_update": bool(tag and is_newer(tag)),
         "notes": notes[:800],        # UI 표시용 — 너무 길면 자름
         "asset_url": asset_url or "",
         "asset_name": asset_name or "",
         "asset_size": asset_size or 0,
     }
-    _last_check = result
-    return result
 
 
 # ── 2) 백그라운드 다운로드 ────────────────────────────────────────────────────

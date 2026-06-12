@@ -149,3 +149,40 @@ def test_get_minutes_template():
     assert r["ok"]
     assert r["exists"] is True
     assert r["name"].endswith(".hwpx")
+
+
+# ── 양식 스캔 fieldmap 캐시 보호 (AI 실패 시 기존 매핑 보존) ──────────────────
+
+def test_scan_minutes_template_ai_failure_keeps_existing_fieldmap(workdir):
+    """API 키 없음 등으로 AI 매핑이 실패해도, 이전의 정상 fieldmap을
+    빈 매핑으로 덮어쓰지 않아야 한다 (재스캔 중 일시 오류 보호)."""
+    import shutil
+    from src.minutes.hwpx_minutes import TEMPLATE_MINUTES
+    from src.ai.minutes_template_mapper import (save_minutes_fieldmap,
+                                                load_minutes_fieldmap)
+    tpl = os.path.join(workdir, "커스텀양식.hwpx")
+    shutil.copy2(TEMPLATE_MINUTES, tpl)
+    good = {"cell_map": {"business_name": [2, 2], "meeting_topic": [3, 1]},
+            "unmapped": []}
+    save_minutes_fieldmap(tpl, good)
+
+    api = _api(workdir)          # AI 키 없음 → map_minutes_cells 실패 경로
+    r = api.scan_minutes_template(tpl)
+    assert r["ok"] and r.get("ai_error")
+    kept = load_minutes_fieldmap(tpl)
+    assert kept["cell_map"] == good["cell_map"]   # 기존 매핑 보존
+
+
+def test_scan_minutes_template_first_scan_caches_even_on_ai_failure(workdir):
+    """기존 캐시가 없으면 AI 실패라도 fieldmap을 생성해 둔다 (스캔 사실 기록)."""
+    import shutil
+    from src.minutes.hwpx_minutes import TEMPLATE_MINUTES
+    from src.ai.minutes_template_mapper import load_minutes_fieldmap
+    tpl = os.path.join(workdir, "신규양식.hwpx")
+    shutil.copy2(TEMPLATE_MINUTES, tpl)
+
+    api = _api(workdir)
+    r = api.scan_minutes_template(tpl)
+    assert r["ok"] and r.get("ai_error")
+    fm = load_minutes_fieldmap(tpl)
+    assert fm and fm["cell_map"] == {}

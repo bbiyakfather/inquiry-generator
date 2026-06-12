@@ -40,7 +40,7 @@ def _date_kor(iso_date: str) -> str:
         return iso_date
 
 
-# 설정 공급자(company) 키 → 템플릿 셀필드명 (동적 항목: 담당자·전화·이메일·팩스)
+# 설정 공급자(company) 키 → 템플릿 셀필드명 (10개 항목 전부 설정값으로 동적 반영)
 SUPPLIER_FIELD_MAP = {
     "name":     "sup_name",
     "reg_no":   "sup_reg_no",
@@ -60,7 +60,7 @@ def build_render_plan(doc: dict, result: QuoteResult, company: dict = None) -> R
 
     doc 키: recipient, quote_no, ref_name, ref_tel, date(ISO),
             service_name, service_period
-    company 키(동적 반영): manager, tel, email, fax → sup_* 셀필드
+    company 키: SUPPLIER_FIELD_MAP의 10개 키 → sup_* 셀필드 (빈 값은 공백 1칸)
     """
     warnings = []
     labor_rows = [r for r in result.labor_rows if r.count > 0]
