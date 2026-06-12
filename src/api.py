@@ -954,6 +954,7 @@ class Api:
             from src import convert
             ni = convert.node_info()
             info["node"] = ni["version"] if ni["found"] else False
+            info["node_bundled"] = ni.get("bundled", False)
             ki = convert.kordoc_installed()
             info["kordoc"] = ki["version"] if ki["installed"] else False
         except Exception:

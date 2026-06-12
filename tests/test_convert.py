@@ -33,8 +33,10 @@ def _install_fake_kordoc(runtime_dir, version="3.0.0"):
 
 def test_node_missing(monkeypatch):
     monkeypatch.setattr(kordoc.shutil, "which", lambda name: None)
+    monkeypatch.setattr(kordoc, "_bundled_node", lambda: "")
     ni = kordoc.node_info()
-    assert ni == {"found": False, "path": "", "version": "", "major": 0, "ok": False}
+    assert ni == {"found": False, "path": "", "version": "", "major": 0, "ok": False,
+                  "bundled": False}
     st = kordoc.status()
     assert st["state"] == kordoc.STATE_NODE_MISSING and not st["ready"]
 

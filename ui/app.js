@@ -620,7 +620,7 @@ async function convertPaths(paths) {
     }
     return;
   }
-  if (r.installed_now) toast('kordoc 설치 완료. 이제 HWP·PDF·DOCX 변환이 가능합니다.', 'ok', 4000);
+  if (r.installed_now) toast('변환 도구 준비 완료. HWP·PDF·DOCX 변환을 사용할 수 있습니다.', 'ok', 4000);
   for (const res of r.results || []) {
     if (res.ok) {
       const existing = aiAttachments.findIndex(a => a.name === res.name);
@@ -1267,8 +1267,8 @@ async function runDiagnose() {
     diagLine('Gemini API 키', r.gemini_key ? true : 'warn', r.gemini_key ? '등록됨' : '미등록 (AI 비활성)') +
     diagLine('Google Drive', r.drive_connected ? true : 'warn', r.drive_connected ? '연결됨' : '미연결') +
     diagLine('작업 폴더', r.folder_ok ? true : 'warn', r.folder || '미선택') +
-    diagLine('Node.js (문서 변환)', r.node ? true : 'warn', r.node ? `설치됨 (${r.node})` : '미설치 — nodejs.org에서 설치하세요') +
-    diagLine('kordoc (변환 도구)', r.kordoc ? true : 'warn', r.kordoc ? `설치됨 (v${r.kordoc})` : '미설치 — 첫 파일 드롭 시 자동 설치'));
+    diagLine('Node.js (문서 변환)', r.node ? true : 'warn', r.node ? `${r.node_bundled ? '내장됨' : '설치됨'} (${r.node})` : '런타임 없음') +
+    diagLine('kordoc (변환 도구)', r.kordoc ? true : 'warn', r.kordoc ? `내장됨 (v${r.kordoc})` : '준비 안 됨'));
 }
 
 async function runHwpTest() {
@@ -1727,7 +1727,7 @@ async function convertPathsForMinutes(paths) {
     toast(r.error || '변환 실패', 'err', 5000);
     return;
   }
-  if (r.installed_now) toast('kordoc 설치 완료. 이제 HWP·PDF·DOCX 변환이 가능합니다.', 'ok', 4000);
+  if (r.installed_now) toast('변환 도구 준비 완료. HWP·PDF·DOCX 변환을 사용할 수 있습니다.', 'ok', 4000);
   for (const res of r.results || []) {
     if (res.ok) {
       const ex = minutesAttachments.findIndex(a => a.name === res.name);

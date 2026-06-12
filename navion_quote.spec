@@ -92,3 +92,23 @@ _shutil.copy(
     _os.path.join(SPECPATH, "내비온 견적서 생성기.exe.config"),
     _os.path.join(_dist_dir, "내비온 견적서 생성기.exe.config"),
 )
+
+# kordoc-runtime 내장 — Node.js 별도 설치 불필요
+# PyInstaller 6.x는 datas를 _internal/ 아래로 복사하므로 data_path()가 찾지 못한다.
+# COLLECT 후 exe 옆에 직접 복사하고, 빌드 머신의 node.exe도 동봉한다.
+_kordoc_src = _os.path.join(SPECPATH, "kordoc-runtime")
+_kordoc_dst = _os.path.join(_dist_dir, "kordoc-runtime")
+if _os.path.isdir(_kordoc_src):
+    if _os.path.isdir(_kordoc_dst):
+        _shutil.rmtree(_kordoc_dst)
+    _shutil.copytree(_kordoc_src, _kordoc_dst)
+    # 빌드 머신의 node.exe를 동봉 (사용자가 Node.js를 별도 설치할 필요 없음)
+    _node_dst = _os.path.join(_kordoc_dst, "node.exe")
+    if not _os.path.isfile(_node_dst):
+        _node_src = _shutil.which("node")
+        if _node_src and _os.path.isfile(_node_src):
+            _shutil.copy2(_node_src, _node_dst)
+            print(f"[spec] node.exe 동봉 완료: {_node_src} → {_node_dst}")
+        else:
+            print("[spec] 경고: 빌드 머신에 node.exe를 찾지 못했습니다. "
+                  "Node.js를 설치한 뒤 다시 빌드하세요.")

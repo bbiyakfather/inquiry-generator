@@ -54,6 +54,12 @@ def _runtime_dir() -> str:
     return data_path("kordoc-runtime")
 
 
+def _bundled_node() -> str:
+    """배포 번들에 포함된 node.exe 경로. 없으면 빈 문자열 (개발 환경 폴백용)."""
+    p = os.path.join(_runtime_dir(), "node.exe")
+    return p if os.path.isfile(p) else ""
+
+
 def _run(cmd, timeout, cwd=None):
     """subprocess 공통 옵션 — 한글 경로/출력 안전."""
     return subprocess.run(
@@ -64,10 +70,13 @@ def _run(cmd, timeout, cwd=None):
 # ================= 환경 감지 =================
 
 def node_info() -> dict:
-    """{found, path, version, major, ok}"""
-    path = shutil.which("node")
+    """{found, path, version, major, ok, bundled}
+    번들 node.exe를 우선 사용하고, 없으면 시스템 PATH를 탐색한다."""
+    bundled = _bundled_node()
+    path = bundled or shutil.which("node")
     if not path:
-        return {"found": False, "path": "", "version": "", "major": 0, "ok": False}
+        return {"found": False, "path": "", "version": "", "major": 0, "ok": False,
+                "bundled": False}
     try:
         r = _run([path, "--version"], timeout=10)
         ver = (r.stdout or "").strip()          # 예: "v24.14.1"
@@ -76,7 +85,7 @@ def node_info() -> dict:
     m = re.match(r"v(\d+)", ver)
     major = int(m.group(1)) if m else 0
     return {"found": True, "path": path, "version": ver,
-            "major": major, "ok": major >= NODE_MIN_MAJOR}
+            "major": major, "ok": major >= NODE_MIN_MAJOR, "bundled": bool(bundled)}
 
 
 def npm_path():
