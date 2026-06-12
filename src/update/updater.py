@@ -211,7 +211,17 @@ $staging = '{_ps_quote(staging_app)}'
 $install = '{_ps_quote(install_dir)}'
 $exe     = '{_ps_quote(app_exe)}'
 $work    = '{_ps_quote(work)}'
-Log "updater 시작 pid=$targetPid"
+Log "updater 시작 pid=$targetPid (self=$PID)"
+# 0) 동시 업데이터 상호 배제 — AV가 숨김 PowerShell 기동을 수 분 지연시키면 사용자가
+#    재시도를 반복해 업데이터가 여러 개 쌓인다(2026-06-12 실측: 4개 동시, 12분 지연).
+#    같은 스크립트를 돌리는 다른 PS 인스턴스를 종료해 단일 실행을 보장한다.
+try {{
+    Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+        Where-Object {{ $_.ProcessId -ne $PID -and $_.CommandLine -like '*apply_update.ps1*' }} |
+        ForEach-Object {{ Log "동시 업데이터 종료 pid=$($_.ProcessId)"; Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}
+}} catch {{ Log "동시 실행 정리 예외: $_" }}
+# 0b) staging이 없으면 이미 다른 업데이터가 적용·정리를 끝낸 것 — 이중 재실행 금지.
+if (-not (Test-Path -LiteralPath $staging)) {{ Log '적용할 staging 없음(이미 완료됨) - 종료'; exit }}
 # 1) 대상 앱 종료 대기 (최대 30초) → 안 죽으면 강제 종료
 $deadline = [DateTime]::Now.AddSeconds(30)
 while (Get-Process -Id $targetPid -ErrorAction SilentlyContinue) {{
@@ -219,14 +229,15 @@ while (Get-Process -Id $targetPid -ErrorAction SilentlyContinue) {{
     Start-Sleep -Milliseconds 500
 }}
 Log '대상 프로세스 종료 확인'
-# 1b) install 폴더 안에서 실행 중인 잔여 node.exe 종료.
-#     kordoc 변환 중에 업데이트하면 node.exe(또는 node_modules의 dll)가 파일을 잠가
-#     robocopy가 실패한다. 경로로 한정해 사용자의 무관한 다른 node 프로세스는 건드리지 않는다.
+# 1b) install 폴더에서 실행 중인 모든 프로세스 종료 — 재실행된 앱 인스턴스(업데이터가
+#     침묵하는 동안 사용자가 다시 연 앱)와 kordoc node.exe가 파일을 잠가 robocopy를
+#     실패시킨다. 경로로 한정하므로 무관한 프로세스는 건드리지 않는다.
 try {{
-    Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
-        Where-Object {{ $_.ExecutablePath -and $_.ExecutablePath.StartsWith($install, [StringComparison]::OrdinalIgnoreCase) }} |
-        ForEach-Object {{ Log "잔여 node 종료 pid=$($_.ProcessId)"; Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}
-}} catch {{ Log "node 정리 예외: $_" }}
+    $prefix = $install.TrimEnd('\\') + '\\'
+    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object {{ $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) }} |
+        ForEach-Object {{ Log "install 내 프로세스 종료 pid=$($_.ProcessId) ($($_.Name))"; Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}
+}} catch {{ Log "install 프로세스 정리 예외: $_" }}
 Start-Sleep -Seconds 1
 # 2) 파일 교체 (덮어쓰기, 삭제 없음 → kordoc-runtime·config·token 보존)
 #    /IS /IT 제거: 동일 파일은 건너뛰어 잠금 충돌과 복사 시간을 줄인다
