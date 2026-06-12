@@ -655,7 +655,7 @@ class Api:
             if not any(r.count > 0 for r in labor):
                 return _err("최소 1개 직급에 인원을 입력하세요.")
             result = calculate(labor, expenses, profit_on, trim)
-            plan = build_render_plan(doc, result)
+            plan = build_render_plan(doc, result, company=self.cfg.get("company"))
 
             paths = qs.quote_paths(folder, doc.get("service_name", ""),
                                    doc.get("date", ""))

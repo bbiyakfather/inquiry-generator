@@ -207,6 +207,7 @@ def _scan_fields_com(hwp, hwp_path: str) -> dict:
 def _standard_field_set(max_labor=MAX_LABOR, max_exp=MAX_EXP) -> set:
     """표준 필드명 전체 집합."""
     s = {"recv", "quote_no", "ref_name", "ref_tel", "quote_date",
+         "sup_manager", "sup_tel", "sup_email", "sup_fax",
          "svc_name", "svc_period", "amount_kor",
          "labor_sum_amt", "labor_sum_ratio",
          "exp_sum_amt", "exp_sum_ratio",

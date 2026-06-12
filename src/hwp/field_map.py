@@ -40,11 +40,21 @@ def _date_kor(iso_date: str) -> str:
         return iso_date
 
 
-def build_render_plan(doc: dict, result: QuoteResult) -> RenderPlan:
-    """doc: 문서 정보 dict, result: 계산 결과 → 필드 값 일체.
+# 설정 공급자(company) 키 → 템플릿 셀필드명 (동적 항목: 담당자·전화·이메일·팩스)
+SUPPLIER_FIELD_MAP = {
+    "manager": "sup_manager",
+    "tel":     "sup_tel",
+    "email":   "sup_email",
+    "fax":     "sup_fax",
+}
+
+
+def build_render_plan(doc: dict, result: QuoteResult, company: dict = None) -> RenderPlan:
+    """doc: 문서 정보 dict, result: 계산 결과, company: 설정 공급자 정보 → 필드 값 일체.
 
     doc 키: recipient, quote_no, ref_name, ref_tel, date(ISO),
             service_name, service_period
+    company 키(동적 반영): manager, tel, email, fax → sup_* 셀필드
     """
     warnings = []
     labor_rows = [r for r in result.labor_rows if r.count > 0]
@@ -66,6 +76,13 @@ def build_render_plan(doc: dict, result: QuoteResult) -> RenderPlan:
     f["ref_name"] = (" " + doc["ref_name"]) if doc.get("ref_name") else " "
     f["ref_tel"] = (" " + doc["ref_tel"]) if doc.get("ref_tel") else " "
     f["quote_date"] = _date_kor(doc.get("date", ""))
+
+    # ---- 공급자(설정→문서 동적 반영): 담당자·전화·이메일·팩스 ----
+    # 템플릿에 sup_* 셀필드가 없으면 PutFieldText는 무시되어 무해(하위호환).
+    company = company or {}
+    for ck, fld in SUPPLIER_FIELD_MAP.items():
+        val = str(company.get(ck, "") or "").strip()
+        f[fld] = val if val else " "
 
     # ---- 기본 정보 ----
     f["svc_name"] = doc.get("service_name", "")
