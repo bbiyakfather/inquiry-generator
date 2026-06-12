@@ -65,7 +65,9 @@ gh release create v1.2.1 ^
 
 앱 시작 시 → `check_update()` 백그라운드 실행 → 새 버전이면 배너 표시.  
 배너 또는 설정 탭의 "지금 업데이트" → ZIP 다운로드 → 압축 해제 →  
-updater.bat (detached) → 앱 종료 → robocopy로 파일 교체 → 새 버전 재실행.
+`%TEMP%\navion_update\apply_update.ps1` (PowerShell, detached) → 앱 종료 →
+install 폴더 내 잔여 node.exe 종료 → robocopy로 파일 교체(실패 시 1회 재시도) →
+교체 성공 시에만 새 버전 재실행. 교체 실패면 손상 방지를 위해 재실행을 중단하고 안내한다.
 
 ---
 

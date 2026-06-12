@@ -19,3 +19,6 @@ kordoc-runtime/
 
 # 에디터/도구
 .claude/
+
+# Windows 특수 장치명 (실수로 생성된 경우)
+nul

@@ -219,13 +219,41 @@ while (Get-Process -Id $targetPid -ErrorAction SilentlyContinue) {{
     Start-Sleep -Milliseconds 500
 }}
 Log '대상 프로세스 종료 확인'
+# 1b) install 폴더 안에서 실행 중인 잔여 node.exe 종료.
+#     kordoc 변환 중에 업데이트하면 node.exe(또는 node_modules의 dll)가 파일을 잠가
+#     robocopy가 실패한다. 경로로 한정해 사용자의 무관한 다른 node 프로세스는 건드리지 않는다.
+try {{
+    Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+        Where-Object {{ $_.ExecutablePath -and $_.ExecutablePath.StartsWith($install, [StringComparison]::OrdinalIgnoreCase) }} |
+        ForEach-Object {{ Log "잔여 node 종료 pid=$($_.ProcessId)"; Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}
+}} catch {{ Log "node 정리 예외: $_" }}
 Start-Sleep -Seconds 1
 # 2) 파일 교체 (덮어쓰기, 삭제 없음 → kordoc-runtime·config·token 보존)
-robocopy $staging $install /E /IS /IT /R:3 /W:1 | Out-Null
-Log "robocopy 종료코드 $LASTEXITCODE"
-# 3) 새 버전 재실행
-Start-Process -FilePath $exe -WorkingDirectory $install
-Log '재실행 완료'
+#    /IS /IT 제거: 동일 파일은 건너뛰어 잠금 충돌과 복사 시간을 줄인다
+#    (변경된 파일은 크기·수정시각이 달라 robocopy 기본 동작으로 정상 복사됨).
+#    잠금 등으로 실패하면(8+) 잠시 후 1회 재시도 — onedir 앱은 부분 복사 시
+#    exe와 _internal/ DLL 불일치로 부팅 불능(Themida 보호 exe는 무결성 검사 실패)이 된다.
+$rc = 0
+for ($attempt = 1; $attempt -le 2; $attempt++) {{
+    robocopy $staging $install /E /R:5 /W:2 | Out-Null
+    $rc = $LASTEXITCODE
+    Log "robocopy 시도 $attempt 종료코드 $rc"
+    if ($rc -lt 8) {{ break }}          # 0~7 = 성공(비트 플래그), 8+ = 하나 이상 복사 실패
+    Start-Sleep -Seconds 3
+}}
+# 3) 새 버전 재실행 — 교체 실패(8+)거나 exe 누락이면 손상된 앱 실행을 막는다
+if ($rc -ge 8) {{
+    Log "치명적: 파일 교체 실패(코드 $rc). 손상 방지를 위해 재실행을 건너뜁니다."
+    try {{ (New-Object -ComObject WScript.Shell).Popup(
+        "업데이트 중 파일 교체에 실패했습니다.`n다른 프로그램이 파일을 사용 중일 수 있습니다.`n프로그램을 다시 실행하거나 재설치해 주세요.`n`n로그: $log",
+        0, "내비온 업데이트 실패", 0x10) | Out-Null }} catch {{ }}
+}} elseif (-not (Test-Path -LiteralPath $exe)) {{
+    Log "치명적: 실행 파일을 찾을 수 없습니다($exe). 재실행 중단."
+}} else {{
+    Start-Sleep -Milliseconds 800      # 파일 핸들 flush·AV 스캔이 끝날 여유
+    Start-Process -FilePath $exe -WorkingDirectory $install
+    Log '재실행 완료'
+}}
 # 4) 정리 (스크립트·로그는 다음 실행에서 덮임)
 Start-Sleep -Seconds 2
 Remove-Item -LiteralPath (Join-Path $work 'staging') -Recurse -Force -ErrorAction SilentlyContinue
