@@ -13,7 +13,7 @@ from PyInstaller.utils.hooks import collect_all, collect_data_files
 # ── EXE 버전 리소스 생성 (파일 속성 → 자세히 탭에 표기) ──────────────────────
 # src/version.py 의 __version__ 을 단일 출처로 사용해 드리프트 방지.
 import sys as _sys_pre, os as _os_pre
-_sys_pre.path.insert(0, _os_pre.dirname(SPECPATH))
+_sys_pre.path.insert(0, _os_pre.path.dirname(SPECPATH))
 from src.version import __version__ as _APP_VER, version_tuple4 as _vt4
 from PyInstaller.utils.win32.versioninfo import (
     VSVersionInfo, FixedFileInfo, StringFileInfo, StringTable, StringStruct,
@@ -32,7 +32,9 @@ def _make_version_resource():
         ),
         kids=[
             StringFileInfo([
-                StringTable("040003b5", [
+                # 키 = 언어(0x0412 한국어) + 코드페이지(0x04b0=1200 Unicode).
+                # Translation 의 [lang, codepage] 와 반드시 일치해야 문자열이 읽힌다.
+                StringTable("041204b0", [
                     StringStruct("CompanyName",      "내비온"),
                     StringStruct("FileDescription",  "내비온 견적서·회의록 생성기"),
                     StringStruct("FileVersion",      ver_str),
@@ -41,11 +43,11 @@ def _make_version_resource():
                     StringStruct("ProductVersion",   ver_str),
                 ])
             ]),
-            VarFileInfo([VarStruct("Translation", [0x0412, 0x03b5])]),
+            VarFileInfo([VarStruct("Translation", [0x0412, 0x04b0])]),
         ],
     )
     ver_file = _os_pre.path.join(SPECPATH, "build", "version_info.txt")
-    _os_pre.makedirs(_os_pre.dirname(ver_file), exist_ok=True)
+    _os_pre.makedirs(_os_pre.path.dirname(ver_file), exist_ok=True)
     with open(ver_file, "w", encoding="utf-8") as _fp:
         _fp.write(str(info))
     return ver_file
