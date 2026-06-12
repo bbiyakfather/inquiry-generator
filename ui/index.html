@@ -31,6 +31,13 @@
   <!-- ===== 메인 영역 ===== -->
   <main class="main">
 
+    <!-- 업데이트 알림 배너 (시작 시 자동 확인 후 표시, 기본 hidden) -->
+    <div id="update-banner" class="update-banner" hidden>
+      <span id="update-banner-text"></span>
+      <button id="update-banner-go" class="btn btn-primary btn-mini">지금 업데이트</button>
+      <button id="update-banner-later" class="btn btn-ghost btn-mini">나중에</button>
+    </div>
+
     <!-- ===== 견적서 허브 (대시보드 | 편집기) ===== -->
     <section id="hub-quote" class="view active">
       <div class="sub-nav">
@@ -403,6 +410,20 @@
           <div class="inline-row">
             <button id="btn-tutorial-replay" class="btn btn-outline">▶ 튜토리얼 다시 보기</button>
           </div>
+        </div>
+
+        <div class="card form-card">
+          <h3>정보 <span class="h-sub">버전 및 업데이트</span></h3>
+          <div class="diag-line">
+            <span class="diag-k">현재 버전</span>
+            <span class="diag-v" id="app-version">확인 중…</span>
+          </div>
+          <div class="inline-row" style="gap:8px;align-items:center;margin-top:8px">
+            <button id="btn-check-update" class="btn btn-outline">업데이트 확인</button>
+            <button id="btn-do-update" class="btn btn-primary" hidden>지금 업데이트</button>
+            <span id="update-status-msg" class="hint"></span>
+          </div>
+          <div id="update-notes" class="hint" style="margin-top:6px;white-space:pre-wrap" hidden></div>
         </div>
        </div>
 

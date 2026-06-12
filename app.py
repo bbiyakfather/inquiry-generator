@@ -36,6 +36,7 @@ if getattr(sys, "frozen", False):
 
 from src.paths import resource_path
 from src.logutil import log as _log
+from src.version import __version__
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 
@@ -54,7 +55,7 @@ def main():
     _log("Api 초기화 완료 (config 로드)")
 
     window = webview.create_window(
-        "내비온 견적서 생성기",
+        f"내비온 견적서 생성기  v{__version__}",
         resource_path("ui", "index.html"),
         js_api=api,
         width=1440, height=920, min_size=(1120, 720),

@@ -454,6 +454,12 @@ svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;
 .mn-sec-row input[type=text]{flex:1}
 .mn-sec-row .btn-mini{flex-shrink:0}
 
+/* 업데이트 배너 */
+.update-banner{display:flex;align-items:center;gap:10px;padding:9px 16px;
+  background:var(--brand-soft);color:var(--brand);font-size:13px;font-weight:600;
+  border-bottom:1px solid var(--brand);flex-shrink:0;flex-wrap:wrap}
+.update-banner span{flex:1;min-width:0}
+
 /* 스크롤바 */
 ::-webkit-scrollbar{width:10px;height:10px}
 ::-webkit-scrollbar-thumb{background:#D2D9E6;border-radius:6px;border:2px solid var(--bg)}

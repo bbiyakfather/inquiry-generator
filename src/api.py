@@ -1187,3 +1187,49 @@ class Api:
             return {"ok": True, "path": path}
         except Exception as e:
             return _err(e)
+
+    # ================= 버전 / 자동 업데이트 =================
+
+    def get_app_version(self) -> dict:
+        from src.version import __version__, GITHUB_REPO
+        return {"ok": True, "version": __version__, "repo": GITHUB_REPO}
+
+    def check_update(self) -> dict:
+        try:
+            from src.update import updater
+            return updater.check_latest()
+        except Exception as e:
+            return _err(e)
+
+    def start_update(self, asset_url: str, asset_size: int = 0) -> dict:
+        try:
+            from src.update import updater
+            from src.paths import is_frozen
+            if not is_frozen():
+                return {"ok": False, "error": "개발 모드에서는 업데이트 적용이 지원되지 않습니다."}
+            updater.start(asset_url, int(asset_size or 0))
+            return {"ok": True}
+        except Exception as e:
+            return _err(e)
+
+    def update_status(self) -> dict:
+        try:
+            from src.update import updater
+            s = updater.status()
+            return {"ok": True, **s}
+        except Exception as e:
+            return _err(e)
+
+    def apply_update(self) -> dict:
+        try:
+            from src.update import updater
+            import sys as _sys
+            exe = _sys.executable
+            install_dir = os.path.dirname(os.path.abspath(exe))
+            app_exe_name = os.path.basename(exe)
+            result = updater.apply(os.getpid(), install_dir, app_exe_name)
+            if result.get("ok") and self._window:
+                self._window.destroy()
+            return result
+        except Exception as e:
+            return _err(e)

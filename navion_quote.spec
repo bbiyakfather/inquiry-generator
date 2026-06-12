@@ -10,6 +10,49 @@
 """
 from PyInstaller.utils.hooks import collect_all, collect_data_files
 
+# ── EXE 버전 리소스 생성 (파일 속성 → 자세히 탭에 표기) ──────────────────────
+# src/version.py 의 __version__ 을 단일 출처로 사용해 드리프트 방지.
+import sys as _sys_pre, os as _os_pre
+_sys_pre.path.insert(0, _os_pre.dirname(SPECPATH))
+from src.version import __version__ as _APP_VER, version_tuple4 as _vt4
+from PyInstaller.utils.win32.versioninfo import (
+    VSVersionInfo, FixedFileInfo, StringFileInfo, StringTable, StringStruct,
+    VarFileInfo, VarStruct,
+)
+
+def _make_version_resource():
+    vt = _vt4()
+    ver_str = _APP_VER
+    info = VSVersionInfo(
+        ffi=FixedFileInfo(
+            filevers=vt, prodvers=vt,
+            mask=0x3f, flags=0x0,
+            OS=0x40004, fileType=0x1, subtype=0x0,
+            date=(0, 0),
+        ),
+        kids=[
+            StringFileInfo([
+                StringTable("040003b5", [
+                    StringStruct("CompanyName",      "내비온"),
+                    StringStruct("FileDescription",  "내비온 견적서·회의록 생성기"),
+                    StringStruct("FileVersion",      ver_str),
+                    StringStruct("InternalName",     "navion_inquiry_generator"),
+                    StringStruct("ProductName",      "내비온 견적서 생성기"),
+                    StringStruct("ProductVersion",   ver_str),
+                ])
+            ]),
+            VarFileInfo([VarStruct("Translation", [0x0412, 0x03b5])]),
+        ],
+    )
+    ver_file = _os_pre.path.join(SPECPATH, "build", "version_info.txt")
+    _os_pre.makedirs(_os_pre.dirname(ver_file), exist_ok=True)
+    with open(ver_file, "w", encoding="utf-8") as _fp:
+        _fp.write(str(info))
+    return ver_file
+
+_VERSION_FILE = _make_version_resource()
+
+
 # templates 폴더 전체가 아니라 실제 사용하는 템플릿 1개만 번들.
 # (직인 포함 백업본 '견적서_템플릿_직인포함.hwp'가 배포물에 들어가지 않도록)
 import os as _os_pre
@@ -80,6 +123,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon="assets/icon.ico",   # 견적서 모티프 아이콘 (tools/make_icon.py로 재생성)
+    version=_VERSION_FILE,    # 파일 속성 → 자세히 탭에 버전 표기
 )
 coll = COLLECT(
     exe,

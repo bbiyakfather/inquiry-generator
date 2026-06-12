@@ -998,6 +998,11 @@ function renderSettings() {
       st.textContent = '';
     }
   });
+  // 현재 버전 표기 (설정 탭 진입 시마다 갱신)
+  call('get_app_version').then(r => {
+    const el = $('#app-version');
+    if (el) el.textContent = r.ok ? `v${r.version}` : '–';
+  });
 }
 
 function renderPriceTable(year) {
@@ -1902,6 +1907,126 @@ function initMinutesView() {
 }
 
 /* ===================================================================
+   자동 업데이트
+=================================================================== */
+// 마지막 check 결과 캐시 (start_update 시 재사용)
+let _updateInfo = null;
+// "나중에" 클릭 시 이번 세션 동안 배너 재표시 억제
+let _updateBannerDismissed = false;
+// 폴링 인터벌 ID
+let _updatePollId = null;
+
+function _setUpdateStatus(msg, opts = {}) {
+  const el = $('#update-status-msg');
+  if (el) el.textContent = msg;
+  const bannerText = $('#update-banner-text');
+  if (bannerText && opts.banner) bannerText.textContent = opts.banner;
+}
+
+function _showUpdateBanner(info) {
+  if (_updateBannerDismissed) return;
+  const banner = $('#update-banner');
+  if (!banner) return;
+  const tag = info.latest_tag || '';
+  $('#update-banner-text').textContent = `새 버전 ${tag}이(가) 있습니다.`;
+  banner.removeAttribute('hidden');
+  _updateInfo = info;
+}
+
+async function startUpdateFlow(info) {
+  if (!info) info = _updateInfo;
+  if (!info || !info.asset_url) {
+    toast('다운로드 링크를 찾을 수 없습니다.', 'err');
+    return;
+  }
+  // 버튼 비활성화
+  ['#btn-do-update', '#update-banner-go'].forEach(sel => {
+    const b = $(sel);
+    if (b) { b.disabled = true; b.textContent = '준비 중…'; }
+  });
+
+  const r = await call('start_update', info.asset_url, info.asset_size || 0);
+  if (!r.ok) {
+    toast(r.error || '업데이트 시작 실패', 'err');
+    ['#btn-do-update', '#update-banner-go'].forEach(sel => {
+      const b = $(sel);
+      if (b) { b.disabled = false; b.textContent = '지금 업데이트'; }
+    });
+    return;
+  }
+
+  // 폴링 시작
+  if (_updatePollId) clearInterval(_updatePollId);
+  _updatePollId = setInterval(async () => {
+    const s = await call('update_status');
+    if (!s.ok) return;
+    const phase = s.phase || '';
+    const pct = s.pct || 0;
+
+    let label = '';
+    if (phase === 'downloading') label = `다운로드 중… ${pct}%`;
+    else if (phase === 'extracting') label = `압축 해제 중… ${pct}%`;
+    else if (phase === 'ready') label = '준비 완료. 적용 중…';
+    else if (phase === 'applying') label = '파일 교체 중…';
+    else if (phase === 'error') label = `오류: ${s.error || ''}`;
+
+    _setUpdateStatus(label, { banner: label });
+
+    if (phase === 'ready') {
+      clearInterval(_updatePollId);
+      _updatePollId = null;
+      _setUpdateStatus('재시작 중…', { banner: '재시작합니다…' });
+      await call('apply_update');
+    } else if (phase === 'error') {
+      clearInterval(_updatePollId);
+      _updatePollId = null;
+      toast(`업데이트 실패: ${s.error || ''}`, 'err');
+      ['#btn-do-update', '#update-banner-go'].forEach(sel => {
+        const b = $(sel);
+        if (b) { b.disabled = false; b.textContent = '지금 업데이트'; }
+      });
+    }
+  }, 800);
+}
+
+async function checkUpdateManual() {
+  const btnCheck = $('#btn-check-update');
+  const btnDo = $('#btn-do-update');
+  const statusMsg = $('#update-status-msg');
+  const notes = $('#update-notes');
+  if (btnCheck) { btnCheck.disabled = true; btnCheck.textContent = '확인 중…'; }
+  if (statusMsg) statusMsg.textContent = '';
+  if (notes) notes.setAttribute('hidden', '');
+
+  const r = await call('check_update');
+  if (btnCheck) { btnCheck.disabled = false; btnCheck.textContent = '업데이트 확인'; }
+  if (!r.ok) {
+    if (statusMsg) statusMsg.textContent = r.error || '확인 실패';
+    return;
+  }
+  _updateInfo = r;
+  if (r.has_update) {
+    if (statusMsg) statusMsg.textContent = `새 버전 ${r.latest_tag}이(가) 있습니다.`;
+    if (notes && r.notes) { notes.textContent = r.notes; notes.removeAttribute('hidden'); }
+    if (btnDo) { btnDo.removeAttribute('hidden'); btnDo.disabled = false; btnDo.textContent = '지금 업데이트'; }
+    _showUpdateBanner(r);
+  } else {
+    if (statusMsg) statusMsg.textContent = '최신 버전입니다.';
+    if (btnDo) btnDo.setAttribute('hidden', '');
+  }
+}
+
+async function checkUpdateSilently() {
+  try {
+    const r = await call('check_update');
+    if (r && r.ok && r.has_update) {
+      _updateInfo = r;
+      _showUpdateBanner(r);
+    }
+  } catch (_) { /* 네트워크 오류 시 조용히 무시 */ }
+}
+
+/* ===================================================================
    초기화 / 이벤트 바인딩
 =================================================================== */
 async function init() {
@@ -2083,6 +2208,21 @@ async function init() {
 
   // 최초 실행 시 튜토리얼 자동 시작 (=== false: config 미로딩 폴백에선 미작동)
   if (state.config && state.config.tutorial_seen === false) setTimeout(startTour, 400);
+
+  // 업데이트 — 설정 탭 버튼
+  $('#btn-check-update').addEventListener('click', checkUpdateManual);
+  $('#btn-do-update').addEventListener('click', () => startUpdateFlow(_updateInfo));
+
+  // 업데이트 — 상단 배너
+  $('#update-banner-go').addEventListener('click', () => startUpdateFlow(_updateInfo));
+  $('#update-banner-later').addEventListener('click', () => {
+    _updateBannerDismissed = true;
+    const b = $('#update-banner');
+    if (b) b.setAttribute('hidden', '');
+  });
+
+  // 시작 시 자동 업데이트 확인 (1.5초 지연 — init 완료 후 조용히 실행)
+  setTimeout(checkUpdateSilently, 1500);
 }
 
 /* pywebview 준비 대기 */
