@@ -458,6 +458,8 @@ svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;
 .update-banner{display:flex;align-items:center;gap:10px;padding:9px 16px;
   background:var(--brand-soft);color:var(--brand);font-size:13px;font-weight:600;
   border-bottom:1px solid var(--brand);flex-shrink:0;flex-wrap:wrap}
+/* hidden 속성이 display:flex 를 이기도록 명시 (없으면 배너가 안 사라짐) */
+.update-banner[hidden]{display:none}
 .update-banner span{flex:1;min-width:0}
 
 /* 스크롤바 */
