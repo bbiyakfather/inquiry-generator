@@ -972,6 +972,7 @@ function renderSettings() {
   // AI 제공사·모델
   $('#s-ai-provider').value = cfg.ai_provider || 'gemini';
   renderAIProvider();
+  renderAiPrompts();
   // 공급자
   const grid = $('#company-grid');
   grid.innerHTML = COMPANY_FIELDS.map(([k, label]) =>
@@ -1053,6 +1054,39 @@ async function saveCompany() {
   state.config.company = company;
   const r = await call('set_config', { company });
   if (r.ok) toast('공급자 정보 저장 완료', 'ok'); else toast(r.error, 'err');
+}
+
+// ── AI 초안 기초 프롬프트 (문서 유형별 편집·저장·기본값 복원) ──
+const AI_PROMPT_TYPES = ['quote', 'minutes'];
+
+function renderAiPrompts() {
+  const cfg = state.config;
+  if (!cfg) return;
+  AI_PROMPT_TYPES.forEach(t => {
+    const ta = $(`#s-ai-prompt-${t}`);
+    if (!ta) return;
+    const ov = ((cfg.ai_prompts || {})[t] || '').trim();
+    ta.value = ov || ((cfg.ai_prompt_defaults || {})[t] || '');
+    $(`#ai-prompt-status-${t}`).textContent = ov ? '사용자 지정 지침 사용 중' : '기본 지침 사용 중';
+  });
+}
+
+async function saveAiPrompt(t) {
+  const r = await call('set_ai_prompt', t, $(`#s-ai-prompt-${t}`).value);
+  if (!r.ok) { toast(r.error || '저장 실패', 'err'); return; }
+  state.config.ai_prompts = state.config.ai_prompts || {};
+  state.config.ai_prompts[t] = r.text;          // 백엔드 정규화 결과(에코백) 반영
+  renderAiPrompts();
+  toast(r.custom ? 'AI 프롬프트 저장 완료' : '기본 지침과 동일 — 기본값 사용으로 저장됨', 'ok');
+}
+
+async function resetAiPrompt(t) {
+  const r = await call('set_ai_prompt', t, '');
+  if (!r.ok) { toast(r.error || '복원 실패', 'err'); return; }
+  state.config.ai_prompts = state.config.ai_prompts || {};
+  state.config.ai_prompts[t] = '';
+  renderAiPrompts();
+  toast('기본 지침으로 복원됨', 'ok');
 }
 
 const CUSTOM_MODEL = '__custom__';
@@ -1956,6 +1990,10 @@ async function init() {
   $('#btn-refresh-models').addEventListener('click', refreshModels);
   $('#btn-save-key').addEventListener('click', saveKey);
   $('#btn-test-key').addEventListener('click', testKey);
+  AI_PROMPT_TYPES.forEach(t => {
+    $(`#btn-save-ai-prompt-${t}`).addEventListener('click', () => saveAiPrompt(t));
+    $(`#btn-reset-ai-prompt-${t}`).addEventListener('click', () => resetAiPrompt(t));
+  });
   // 템플릿 관리
   $('#btn-pick-tpl').addEventListener('click', pickTemplate);
   $('#btn-scan-tpl').addEventListener('click', scanTemplate);

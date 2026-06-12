@@ -417,6 +417,18 @@
           <p class="hint">※ 책임연구원은 규칙상 항상 1명으로 고정됩니다(참여율 10%). 보조원 명수가 이 한도까지 탄력 운영됩니다.</p>
           <button id="btn-save-maxcnt" class="btn btn-outline">최대 인원 저장</button>
         </div>
+
+        <div class="card form-card">
+          <h3>AI 초안 프롬프트 <span class="h-sub">견적서 AI의 역할·작성 규칙 (기초 지침)</span></h3>
+          <textarea id="s-ai-prompt-quote" rows="14" spellcheck="false"></textarea>
+          <p class="hint">※ 과업 내용·목표금액·단가표·경비 가이드는 시스템이 항상 이 지침 뒤에 자동으로 붙여 전달합니다.
+            지침을 어떻게 바꿔도 초안 기능은 깨지지 않습니다. 비우고 저장하면 기본 지침을 사용합니다.</p>
+          <div class="inline-row">
+            <button id="btn-save-ai-prompt-quote" class="btn btn-outline">프롬프트 저장</button>
+            <button id="btn-reset-ai-prompt-quote" class="btn btn-ghost">기본값 복원</button>
+            <span id="ai-prompt-status-quote" class="hint"></span>
+          </div>
+        </div>
        </div>
 
        <div class="settings-col">
@@ -468,6 +480,18 @@
             <button id="btn-s-minutes-folder" class="btn btn-ghost">변경</button>
           </div>
           <p class="hint">※ 미지정 시 견적서 폴더를 함께 사용합니다.</p>
+        </div>
+
+        <div class="card form-card">
+          <h3>AI 초안 프롬프트 <span class="h-sub">회의록 AI의 역할·작성 규칙 (기초 지침)</span></h3>
+          <textarea id="s-ai-prompt-minutes" rows="14" spellcheck="false"></textarea>
+          <p class="hint">※ 회의 메모·녹음 텍스트는 시스템이 항상 이 지침 뒤에 자동으로 붙여 전달합니다.
+            지침을 어떻게 바꿔도 초안 기능은 깨지지 않습니다. 비우고 저장하면 기본 지침을 사용합니다.</p>
+          <div class="inline-row">
+            <button id="btn-save-ai-prompt-minutes" class="btn btn-outline">프롬프트 저장</button>
+            <button id="btn-reset-ai-prompt-minutes" class="btn btn-ghost">기본값 복원</button>
+            <span id="ai-prompt-status-minutes" class="hint"></span>
+          </div>
         </div>
        </div>
 

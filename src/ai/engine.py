@@ -9,16 +9,25 @@ from src.ai import gemini
 from src.ai import llm
 from src.ai import minutes as _minutes_mod
 
+# 문서 유형별 기본 기초 지침 — 설정 UI 노출('기본값 복원')과 오버라이드 비교용.
+DIRECTIVE_DEFAULTS = {
+    "quote": gemini.QUOTE_DIRECTIVE_DEFAULT,
+    "minutes": _minutes_mod.MINUTES_DIRECTIVE_DEFAULT,
+}
+
 
 def draft_minutes(provider: str, *, description: str,
-                  api_key: str, model: str, timeout: int = 60) -> dict:
+                  api_key: str, model: str, timeout: int = 60,
+                  directive=None) -> dict:
     """프로바이더 공통 회의록 초안. 반환: {ok, draft?/error?, model_error?}"""
-    return _minutes_mod.draft_minutes(provider, description, api_key, model, timeout)
+    return _minutes_mod.draft_minutes(provider, description, api_key, model,
+                                      timeout, directive=directive)
 
 
 def draft_quote(provider: str, *, description: str, target: int, profit_on: bool,
                 expense_budget: int, price_table: dict, year: str,
-                api_key: str, model: str, timeout: int = 60) -> dict:
+                api_key: str, model: str, timeout: int = 60,
+                directive=None) -> dict:
     """프로바이더 공통 견적 초안. 반환: {ok, draft?/error?, model_error?}"""
     if not api_key:
         label = llm.PROVIDER_LABELS.get(provider, provider)
@@ -28,10 +37,12 @@ def draft_quote(provider: str, *, description: str, target: int, profit_on: bool
         return gemini.draft_quote(
             description, int(target), profit_on,
             expense_budget=int(expense_budget), price_table=price_table,
-            year=year, api_key=api_key, model=model, timeout=timeout)
+            year=year, api_key=api_key, model=model, timeout=timeout,
+            directive=directive)
 
     prompt = gemini.build_prompt(description, target, profit_on,
-                                 expense_budget, price_table, year)
+                                 expense_budget, price_table, year,
+                                 directive=directive)
     r = llm.complete_json(provider, api_key, model, prompt,
                           schema=gemini.RESPONSE_SCHEMA, timeout=timeout)
     if not r.get("ok"):

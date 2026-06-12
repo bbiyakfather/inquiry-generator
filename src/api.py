@@ -27,6 +27,10 @@ def _err(msg, **kw):
     return {"ok": False, "error": str(msg), **kw}
 
 
+# AI 초안 기초 지침 최대 길이 (config 비대화·실수 붙여넣기 방지)
+_AI_PROMPT_MAX = 8000
+
+
 def _parse_labor(items):
     rows = []
     for it in items or []:
@@ -235,6 +239,10 @@ class Api:
             "ai_models": ai_models,
             "ai_default_models": ai_llm.DEFAULT_MODELS,
             "gemini_models": cs.GEMINI_MODELS,    # gemini 큐레이트 드롭다운용
+            # AI 초안 기초 지침 (빈 문자열 = 기본 지침 사용) + 기본값(복원·비교용)
+            "ai_prompts": {t: cs.get_ai_prompt(cfg, t)
+                           for t in cs.AI_PROMPT_DOC_TYPES},
+            "ai_prompt_defaults": dict(ai_engine.DIRECTIVE_DEFAULTS),
             "max_counts": cfg.get("labor", {}).get("max_counts", {}),
             "last_folder": cfg.get("last_folder", ""),
             # 문서 유형별 작업 폴더 (UI 시딩용 — 폴백 적용된 실효값)
@@ -265,6 +273,23 @@ class Api:
         try:
             cs.set_ai_model(self.cfg, provider, model)
             return {"ok": True, "model": cs.get_ai_model(self.cfg, provider)}
+        except Exception as e:
+            return _err(e)
+
+    def set_ai_prompt(self, doc_type, text):
+        """AI 초안 기초 지침 저장. 빈 값·기본값과 동일하면 오버라이드 해제("")
+        — 사용자가 그대로 저장해도 향후 기본 지침 개선이 계속 반영되게."""
+        try:
+            if doc_type not in cs.AI_PROMPT_DOC_TYPES:
+                return _err(f"알 수 없는 문서 유형: {doc_type}")
+            norm = str(text or "").replace("\r\n", "\n").strip()
+            if len(norm) > _AI_PROMPT_MAX:
+                return _err(f"프롬프트가 너무 깁니다 ({_AI_PROMPT_MAX:,}자 이내로 입력하세요).")
+            if norm == ai_engine.DIRECTIVE_DEFAULTS.get(doc_type, "").strip():
+                norm = ""
+            cs.set_ai_prompt(self.cfg, doc_type, norm)
+            return {"ok": True, "doc_type": doc_type,
+                    "custom": bool(norm), "text": norm}
         except Exception as e:
             return _err(e)
 
@@ -677,7 +702,8 @@ class Api:
             res = ai_engine.draft_quote(
                 provider, description=desc, target=int(target), profit_on=profit_on,
                 expense_budget=int(max(0, g.expense_target)),
-                price_table=prices, year=year, api_key=key, model=model)
+                price_table=prices, year=year, api_key=key, model=model,
+                directive=cs.get_ai_prompt(self.cfg, "quote") or None)
             if not res.get("ok"):
                 return res
 
@@ -964,7 +990,8 @@ class Api:
             model = cs.get_ai_model(self.cfg, provider)
 
             res = ai_engine.draft_minutes(
-                provider, description=desc, api_key=key, model=model)
+                provider, description=desc, api_key=key, model=model,
+                directive=cs.get_ai_prompt(self.cfg, "minutes") or None)
             if not res.get("ok"):
                 return res
 

@@ -61,6 +61,9 @@ DEFAULT_CONFIG = {
         "openai": {"api_key_enc": "", "model": "gpt-5.1"},
         "anthropic": {"api_key_enc": "", "model": "claude-opus-4-8"},
     },
+    # AI 초안 기초 지침 오버라이드 — 빈 문자열이면 내장 기본 지침(engine.DIRECTIVE_DEFAULTS) 사용.
+    # 과업 내용·단가표·경비 가이드 등 데이터 블록은 지침과 무관하게 항상 시스템이 자동 첨부.
+    "ai_prompts": {"quote": "", "minutes": ""},
     "quote_no_seq": {},          # {"2026": 2} → 다음 번호 제 2026-002호
     "last_folder": "",           # (하위호환) 견적서 폴더 구버전 키 — doc_types.quote.folder가 우선
     # 문서 유형별 네임스페이스 — 새 유형 추가 시 여기에 키 추가 (ui DOC_TYPES와 짝)
@@ -210,6 +213,25 @@ def get_ai_model(cfg: dict, provider: str) -> str:
 
 def set_ai_model(cfg: dict, provider: str, model: str) -> dict:
     _provider_store(cfg, provider)["model"] = str(model or "").strip()
+    save_config(cfg)
+    return cfg
+
+
+# ---- AI 초안 기초 지침 (문서 유형별 오버라이드) ----
+
+AI_PROMPT_DOC_TYPES = ("quote", "minutes")
+
+
+def get_ai_prompt(cfg: dict, doc_type: str) -> str:
+    """저장된 기초 지침 오버라이드. 빈 문자열 = 내장 기본 지침 사용."""
+    v = (cfg.get("ai_prompts") or {}).get(doc_type, "")
+    return v if isinstance(v, str) else ""
+
+
+def set_ai_prompt(cfg: dict, doc_type: str, text: str) -> dict:
+    if doc_type not in AI_PROMPT_DOC_TYPES:
+        raise ValueError(f"알 수 없는 문서 유형: {doc_type}")
+    cfg.setdefault("ai_prompts", {})[doc_type] = str(text or "")
     save_config(cfg)
     return cfg
 

@@ -74,12 +74,11 @@ MINUTES_SCHEMA = {
     ],
 }
 
-_PROMPT_TMPL = """\
+# 기초 지침(디렉티브) — 설정 화면에서 사용자가 교체 가능한 부분 (UI 노출용 공개 상수).
+# 자리표시자를 두지 않는다: 사용자 편집 텍스트와 동일하게 .format을 통과하지 않기 때문.
+MINUTES_DIRECTIVE_DEFAULT = """\
 너는 대한민국 정부지원사업 회의록 작성 전문가다.
 아래 회의 메모/녹음 텍스트를 분석해 공식 회의록 JSON을 작성하라.
-
-## 입력
-{description}
 
 ## 필수 규칙
 1. sections는 반드시 다음 3개 ■ 섹션 헤더(type=header)를 포함해야 한다:
@@ -92,12 +91,21 @@ _PROMPT_TMPL = """\
 5. business_name·meeting_date·meeting_place·participants 등 명시된 정보만 사용.
    불명확하면 빈 문자열·빈 배열·0으로 둔다 — 절대 임의 추측 금지.
 6. participants 첫 줄은 주관기관(내비온 또는 발주측) 인원. 줄당 같은 기관 참석자.
-7. header text 예: " ■ 주요 회의 내용" (앞에 공백 1개, ■ 기호 필수).
+7. header text 예: " ■ 주요 회의 내용" (앞에 공백 1개, ■ 기호 필수)."""
+
+# 데이터 블록 — 시스템이 항상 자동 첨부 (사용자 편집 불가 → 지침이 어떻든 초안 기능 유지).
+_MINUTES_DATA_TMPL = """## 입력
+{description}
+
+위 필수 규칙을 반드시 준수하여 JSON으로만 답하라.
 """
 
 
-def build_minutes_prompt(description: str) -> str:
-    return _PROMPT_TMPL.format(description=description.strip())
+def build_minutes_prompt(description: str, directive=None) -> str:
+    """directive: 사용자 지정 기초 지침 (없으면 내장 기본).
+    불변식: 사용자 텍스트는 str.format을 절대 통과하지 않는다 ({} 포함 안전)."""
+    head = str(directive or MINUTES_DIRECTIVE_DEFAULT).strip()
+    return head + "\n\n" + _MINUTES_DATA_TMPL.format(description=description.strip())
 
 
 def _normalize_minutes(data: dict) -> dict:
@@ -134,8 +142,9 @@ def _normalize_minutes(data: dict) -> dict:
 
 # ── Gemini 직접 경로 ───────────────────────────────────────────────────────────
 
-def _draft_gemini(description: str, api_key: str, model: str, timeout: int) -> dict:
-    prompt = build_minutes_prompt(description)
+def _draft_gemini(description: str, api_key: str, model: str, timeout: int,
+                  directive=None) -> dict:
+    prompt = build_minutes_prompt(description, directive=directive)
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
@@ -191,7 +200,7 @@ def _draft_gemini(description: str, api_key: str, model: str, timeout: int) -> d
 # ── 공개 API ─────────────────────────────────────────────────────────────────
 
 def draft_minutes(provider: str, description: str, api_key: str, model: str,
-                  timeout: int = 60) -> dict:
+                  timeout: int = 60, directive=None) -> dict:
     """프로바이더 공통 회의록 초안.
     반환: {ok, draft?: normalized MINUTES_SCHEMA dict, error?, model_error?}
     """
@@ -200,9 +209,9 @@ def draft_minutes(provider: str, description: str, api_key: str, model: str,
         return {"ok": False, "error": f"{label} API 키가 설정되지 않았습니다. 설정 화면에서 입력하세요."}
 
     if provider == "gemini":
-        return _draft_gemini(description, api_key, model, timeout)
+        return _draft_gemini(description, api_key, model, timeout, directive=directive)
 
-    prompt = build_minutes_prompt(description)
+    prompt = build_minutes_prompt(description, directive=directive)
     r = complete_json(provider, api_key, model, prompt,
                       schema=MINUTES_SCHEMA, timeout=timeout)
     if not r.get("ok"):

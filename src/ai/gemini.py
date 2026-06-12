@@ -58,10 +58,25 @@ RESPONSE_SCHEMA = {
     "required": ["service_name", "period_text", "personnel", "expenses", "rationale"],
 }
 
-PROMPT_TMPL = """너는 대한민국 정부 학술연구용역 견적 구성 전문가다.
+# 기초 지침(디렉티브) — 설정 화면에서 사용자가 교체 가능한 부분 (UI 노출용 공개 상수).
+# 자리표시자를 두지 않는다: 사용자 편집 텍스트와 동일하게 .format을 통과하지 않기 때문.
+QUOTE_DIRECTIVE_DEFAULT = """너는 대한민국 정부 학술연구용역 견적 구성 전문가다.
 아래 용역에 대해 인력 구성과 경비 항목 구성을 JSON으로 제안하라.
 
-## 용역 설명
+## 매우 중요한 규칙
+1. 금액 계산은 시스템이 한다. 너는 절대 합계를 맞추려 하지 마라.
+2. personnel의 weight는 직급별 참여율의 '상대 비중'일 뿐이다 (시스템이 목표금액에 맞게 스케일링).
+3. 경비 항목 합계는 '## 조건'의 경비 항목 합계 가이드 이내가 되도록 단가×수량을 구성하라 (초과 시 시스템이 경고).
+4. 경비 details는 반드시 "- "로 시작하는 한국어 불릿 1~4개. 예: "- 시장참여자 검증/자문"
+5. 용역 내용에 맞는 경비만 선택하라 (보통 2~5개 항목).
+6. period_text는 "계약일로부터 N주일" 또는 "계약일로부터 N개월" 형식.
+7. months는 실제 수행 기간(월). 3주면 0.75.
+8. service_name은 과업 내용을 대표하는 간결한 용역명. RFP에 사업명·과제명이 있으면 그대로 사용.
+9. recipient는 RFP에 발주기관·수요기업명이 명시된 경우에만 그 기관명을 넣고, 불명확하면 빈 문자열로 둬라(임의 추측 금지)."""
+
+# 데이터 블록 — 시스템이 항상 자동 첨부 (사용자 편집 불가 → 지침이 어떻든 초안 기능 유지).
+# 마지막 줄은 규칙 준수 리마인더(긴 첨부 문서 뒤에서도 지침이 유지되도록).
+_QUOTE_DATA_TMPL = """## 용역 설명
 {description}
 
 ## 조건
@@ -69,17 +84,9 @@ PROMPT_TMPL = """너는 대한민국 정부 학술연구용역 견적 구성 전
 - 이윤 계상: {profit_text}
 - 사용 가능한 직급(이 4개만): 책임연구원, 연구원, 연구보조원, 보조원
 - {year}년 학술연구용역 인건비 기준단가(월): {price_table}
+- 경비 항목 합계 가이드: 약 {expense_budget:,}원 이내
 
-## 매우 중요한 규칙
-1. 금액 계산은 시스템이 한다. 너는 절대 합계를 맞추려 하지 마라.
-2. personnel의 weight는 직급별 참여율의 '상대 비중'일 뿐이다 (시스템이 목표금액에 맞게 스케일링).
-3. 경비 항목 합계는 약 {expense_budget:,}원 이내가 되도록 단가×수량을 구성하라 (초과 시 시스템이 경고).
-4. 경비 details는 반드시 "- "로 시작하는 한국어 불릿 1~4개. 예: "- 시장참여자 검증/자문"
-5. 용역 내용에 맞는 경비만 선택하라 (보통 2~5개 항목).
-6. period_text는 "계약일로부터 N주일" 또는 "계약일로부터 N개월" 형식.
-7. months는 실제 수행 기간(월). 3주면 0.75.
-8. service_name은 과업 내용을 대표하는 간결한 용역명. RFP에 사업명·과제명이 있으면 그대로 사용.
-9. recipient는 RFP에 발주기관·수요기업명이 명시된 경우에만 그 기관명을 넣고, 불명확하면 빈 문자열로 둬라(임의 추측 금지).
+위 지침과 규칙을 반드시 준수하여 JSON으로만 답하라.
 """
 
 
@@ -88,9 +95,15 @@ class GeminiError(Exception):
 
 
 def build_prompt(description: str, target: int, profit_on: bool,
-                 expense_budget: int, price_table: dict, year: str) -> str:
-    """견적 초안 프롬프트 생성 (프로바이더 공통 — engine 디스패처가 재사용)."""
-    return PROMPT_TMPL.format(
+                 expense_budget: int, price_table: dict, year: str,
+                 directive=None) -> str:
+    """견적 초안 프롬프트 생성 (프로바이더 공통 — engine 디스패처가 재사용).
+
+    directive: 사용자 지정 기초 지침 (없으면 내장 기본).
+    불변식: 사용자 텍스트는 str.format을 절대 통과하지 않는다 ({} 포함 안전).
+    """
+    head = str(directive or QUOTE_DIRECTIVE_DEFAULT).strip()
+    return head + "\n\n" + _QUOTE_DATA_TMPL.format(
         description=description.strip(),
         target=int(target),
         profit_text="포함 (10%)" if profit_on else "미계상 (이윤 없는 버전)",
@@ -147,12 +160,13 @@ def validate_key(api_key: str, timeout: int = 20) -> dict:
 def draft_quote(description: str, target: int, profit_on: bool,
                 expense_budget: int, price_table: dict, year: str,
                 api_key: str, model: str = "gemini-flash-latest",
-                timeout: int = 60) -> dict:
+                timeout: int = 60, directive=None) -> dict:
     """AI 구성 초안. 반환: {ok, draft?, error?, rationale?}"""
     if not api_key:
         return {"ok": False, "error": "Gemini API 키가 설정되지 않았습니다. 설정 화면에서 입력하세요."}
 
-    prompt = build_prompt(description, target, profit_on, expense_budget, price_table, year)
+    prompt = build_prompt(description, target, profit_on, expense_budget,
+                          price_table, year, directive=directive)
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
