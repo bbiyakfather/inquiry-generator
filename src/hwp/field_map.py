@@ -42,10 +42,16 @@ def _date_kor(iso_date: str) -> str:
 
 # 설정 공급자(company) 키 → 템플릿 셀필드명 (동적 항목: 담당자·전화·이메일·팩스)
 SUPPLIER_FIELD_MAP = {
-    "manager": "sup_manager",
-    "tel":     "sup_tel",
-    "email":   "sup_email",
-    "fax":     "sup_fax",
+    "name":     "sup_name",
+    "reg_no":   "sup_reg_no",
+    "ceo":      "sup_ceo",       # 형식: "{대표자명}   (인)"
+    "address":  "sup_address",
+    "biz_type": "sup_biz_type",
+    "biz_item": "sup_biz_item",
+    "manager":  "sup_manager",
+    "tel":      "sup_tel",
+    "email":    "sup_email",
+    "fax":      "sup_fax",
 }
 
 
@@ -82,7 +88,12 @@ def build_render_plan(doc: dict, result: QuoteResult, company: dict = None) -> R
     company = company or {}
     for ck, fld in SUPPLIER_FIELD_MAP.items():
         val = str(company.get(ck, "") or "").strip()
-        f[fld] = val if val else " "
+        if not val:
+            f[fld] = " "
+        elif ck == "ceo":
+            f[fld] = f"{val}   (인)"   # 대표자명 + 실물 직인란 고정 문자
+        else:
+            f[fld] = val
 
     # ---- 기본 정보 ----
     f["svc_name"] = doc.get("service_name", "")
