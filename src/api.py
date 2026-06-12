@@ -1021,7 +1021,8 @@ class Api:
                     date_tag = re.sub(r"\D", "", date_raw)[:8]
                     out_path = os.path.join(folder, f"회의록_{topic}_{date_tag}.hwpx")
 
-            res = build_minutes(data, out_path=out_path or None)
+            tpl = cs.get_minutes_tpl(self.cfg) or None
+            res = build_minutes(data, template_hwpx=tpl, out_path=out_path or None)
             if not res.get("ok"):
                 return _err(res.get("error", "HWPX 생성 실패"))
 
@@ -1133,12 +1134,41 @@ class Api:
             return _err(e)
 
     def get_minutes_template(self):
-        """번들 회의록 양식 정보 (설정 표시용, 읽기전용)."""
+        """현재 활성 회의록 양식 정보 (커스텀 우선, 없으면 내장)."""
         try:
             from src.minutes.hwpx_minutes import TEMPLATE_MINUTES
-            return {"ok": True,
-                    "name": os.path.basename(TEMPLATE_MINUTES),
-                    "path": TEMPLATE_MINUTES,
-                    "exists": os.path.isfile(TEMPLATE_MINUTES)}
+            custom = cs.get_minutes_tpl(self.cfg)
+            if custom and os.path.isfile(custom):
+                return {"ok": True, "name": os.path.basename(custom),
+                        "path": custom, "exists": True, "is_custom": True}
+            return {"ok": True, "name": os.path.basename(TEMPLATE_MINUTES),
+                    "path": TEMPLATE_MINUTES, "exists": os.path.isfile(TEMPLATE_MINUTES),
+                    "is_custom": False}
+        except Exception as e:
+            return _err(e)
+
+    def pick_minutes_template_file(self) -> dict:
+        """파일 선택 대화상자로 HWPX 파일 경로 반환."""
+        try:
+            import webview
+            result = self._window.create_file_dialog(
+                webview.OPEN_DIALOG,
+                allow_multiple=False,
+                file_types=("HWPX 파일 (*.hwpx)", "모든 파일 (*.*)"),
+            )
+            if result:
+                return {"ok": True, "path": result[0]}
+            return {"ok": True, "cancelled": True}
+        except Exception as e:
+            return _err(e)
+
+    def set_minutes_template(self, path: str) -> dict:
+        """커스텀 회의록 양식 경로 저장. path='' 이면 기본 복원."""
+        try:
+            path = (path or "").strip()
+            if path and not os.path.isfile(path):
+                return _err("파일을 찾을 수 없습니다")
+            cs.set_minutes_tpl(self.cfg, path)
+            return {"ok": True, "path": path}
         except Exception as e:
             return _err(e)

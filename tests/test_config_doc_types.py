@@ -8,7 +8,7 @@ from src.store import config_store as cs
 def test_default_config_has_doc_types():
     assert "doc_types" in cs.DEFAULT_CONFIG
     assert cs.DEFAULT_CONFIG["doc_types"]["quote"] == {"folder": ""}
-    assert cs.DEFAULT_CONFIG["doc_types"]["minutes"] == {"folder": ""}
+    assert cs.DEFAULT_CONFIG["doc_types"]["minutes"] == {"folder": "", "template_path": ""}
 
 
 def test_merge_promotes_doc_types_for_old_config():

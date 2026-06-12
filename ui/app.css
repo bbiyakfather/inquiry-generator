@@ -33,11 +33,13 @@ svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;
   color:#fff;font-weight:800;font-size:20px;display:grid;place-items:center;
   box-shadow:0 6px 16px rgba(59,91,254,.35)}
 .sidebar nav{display:flex;flex-direction:column;gap:8px}
-.nav-btn{width:46px;height:46px;border-radius:12px;color:var(--ink3);
-  display:grid;place-items:center;transition:all .15s}
+.nav-btn{width:54px;height:58px;border-radius:12px;color:var(--ink3);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  transition:all .15s}
 .nav-btn:hover{background:var(--line2);color:var(--ink2)}
 .nav-btn.active{background:var(--brand-soft);color:var(--brand)}
-.nav-btn svg{width:22px;height:22px}
+.nav-btn svg{width:20px;height:20px;flex-shrink:0}
+.nav-label{font-size:9.5px;font-weight:600;line-height:1;letter-spacing:.01em}
 
 /* ===== 메인 ===== */
 .main{flex:1;min-width:0;display:flex;flex-direction:column}

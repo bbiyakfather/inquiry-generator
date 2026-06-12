@@ -1417,6 +1417,33 @@ async function scanTemplate() {
 }
 
 /* ===================================================================
+   회의록 양식 관리
+=================================================================== */
+async function initMinutesTemplateStatus() {
+  const r = await call('get_minutes_template');
+  if (!r.ok) return;
+  $('#mn-tpl-name').textContent = r.name || '기본 양식 (내장)';
+  $('#mn-tpl-status').textContent = r.is_custom ? '커스텀 양식 적용 중' : '기본 내장 양식 사용 중';
+}
+
+async function pickMinutesTemplate() {
+  const r = await call('pick_minutes_template_file');
+  if (!r.ok || r.cancelled) return;
+  const r2 = await call('set_minutes_template', r.path);
+  if (!r2.ok) { toast(r2.error || '양식 저장 실패', 'err'); return; }
+  $('#mn-tpl-name').textContent = r.path.split(/[/\\]/).pop();
+  $('#mn-tpl-status').textContent = '커스텀 양식 적용 중';
+  toast('회의록 양식이 변경됐습니다', 'ok');
+}
+
+async function resetMinutesTemplate() {
+  const r = await call('set_minutes_template', '');
+  if (!r.ok) { toast(r.error || '복원 실패', 'err'); return; }
+  initMinutesTemplateStatus();
+  toast('기본 내장 양식으로 복원됐습니다', 'ok');
+}
+
+/* ===================================================================
    튜토리얼 (코치마크 투어)
 =================================================================== */
 const TOUR_STEPS = [
@@ -1994,10 +2021,14 @@ async function init() {
     $(`#btn-save-ai-prompt-${t}`).addEventListener('click', () => saveAiPrompt(t));
     $(`#btn-reset-ai-prompt-${t}`).addEventListener('click', () => resetAiPrompt(t));
   });
-  // 템플릿 관리
+  // 견적서 템플릿 관리
   $('#btn-pick-tpl').addEventListener('click', pickTemplate);
   $('#btn-scan-tpl').addEventListener('click', scanTemplate);
   initTemplateStatus();
+  // 회의록 양식 관리
+  $('#btn-pick-mn-tpl').addEventListener('click', pickMinutesTemplate);
+  $('#btn-reset-mn-tpl').addEventListener('click', resetMinutesTemplate);
+  initMinutesTemplateStatus();
 
   $('#btn-diag').addEventListener('click', runDiagnose);
   $('#btn-diag-hwp').addEventListener('click', runHwpTest);

@@ -69,7 +69,7 @@ DEFAULT_CONFIG = {
     # 문서 유형별 네임스페이스 — 새 유형 추가 시 여기에 키 추가 (ui DOC_TYPES와 짝)
     "doc_types": {
         "quote":   {"folder": ""},
-        "minutes": {"folder": ""},
+        "minutes": {"folder": "", "template_path": ""},
     },
     "hwp": {"visible_debug": False},
     "money": {"keep_il": True},
@@ -234,6 +234,17 @@ def set_ai_prompt(cfg: dict, doc_type: str, text: str) -> dict:
     cfg.setdefault("ai_prompts", {})[doc_type] = str(text or "")
     save_config(cfg)
     return cfg
+
+
+def get_minutes_tpl(cfg: dict) -> str:
+    """저장된 회의록 커스텀 템플릿 경로. 빈 문자열 = 내장 기본 사용."""
+    v = (cfg.get("doc_types") or {}).get("minutes", {}).get("template_path", "")
+    return v if isinstance(v, str) else ""
+
+
+def set_minutes_tpl(cfg: dict, path: str) -> None:
+    cfg.setdefault("doc_types", {}).setdefault("minutes", {})["template_path"] = str(path or "")
+    save_config(cfg)
 
 
 def migrate_doc_type_folders(cfg: dict) -> bool:
