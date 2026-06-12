@@ -1923,10 +1923,17 @@ function _setUpdateStatus(msg, opts = {}) {
   if (bannerText && opts.banner) bannerText.textContent = opts.banner;
 }
 
+function _hideUpdateBanner() {
+  const banner = $('#update-banner');
+  if (banner) banner.setAttribute('hidden', '');
+}
+
 function _showUpdateBanner(info) {
   if (_updateBannerDismissed) return;
   const banner = $('#update-banner');
   if (!banner) return;
+  // 새 버전이 아니면 배너를 띄우지 않는다 (이미 최신인데 잔류 방지)
+  if (!info || !info.has_update) { _hideUpdateBanner(); return; }
   const tag = info.latest_tag || '';
   $('#update-banner-text').textContent = `새 버전 ${tag}이(가) 있습니다.`;
   banner.removeAttribute('hidden');
@@ -1935,7 +1942,15 @@ function _showUpdateBanner(info) {
 
 async function startUpdateFlow(info) {
   if (!info) info = _updateInfo;
-  if (!info || !info.asset_url) {
+  // 동일/구버전 가드 — 이미 최신이면 진행하지 않음
+  if (!info || !info.has_update) {
+    toast('이미 최신 버전입니다.', 'info');
+    _hideUpdateBanner();
+    const btnDo = $('#btn-do-update');
+    if (btnDo) btnDo.setAttribute('hidden', '');
+    return;
+  }
+  if (!info.asset_url) {
     toast('다운로드 링크를 찾을 수 없습니다.', 'err');
     return;
   }
@@ -1976,7 +1991,16 @@ async function startUpdateFlow(info) {
       clearInterval(_updatePollId);
       _updatePollId = null;
       _setUpdateStatus('재시작 중…', { banner: '재시작합니다…' });
-      await call('apply_update');
+      const ar = await call('apply_update');
+      if (!ar.ok) {
+        toast(`업데이트 적용 실패: ${ar.error || ''}`, 'err');
+        _setUpdateStatus(`적용 실패: ${ar.error || ''}`, { banner: `적용 실패: ${ar.error || ''}` });
+        ['#btn-do-update', '#update-banner-go'].forEach(sel => {
+          const b = $(sel);
+          if (b) { b.disabled = false; b.textContent = '지금 업데이트'; }
+        });
+      }
+      // 성공 시 앱이 곧 종료/재실행되므로 추가 처리 없음
     } else if (phase === 'error') {
       clearInterval(_updatePollId);
       _updatePollId = null;
@@ -2013,6 +2037,7 @@ async function checkUpdateManual() {
   } else {
     if (statusMsg) statusMsg.textContent = '최신 버전입니다.';
     if (btnDo) btnDo.setAttribute('hidden', '');
+    _hideUpdateBanner();
   }
 }
 

@@ -1201,13 +1201,22 @@ class Api:
         except Exception as e:
             return _err(e)
 
-    def start_update(self, asset_url: str, asset_size: int = 0) -> dict:
+    def start_update(self, asset_url: str = "", asset_size: int = 0) -> dict:
         try:
             from src.update import updater
             from src.paths import is_frozen
             if not is_frozen():
                 return {"ok": False, "error": "개발 모드에서는 업데이트 적용이 지원되지 않습니다."}
-            updater.start(asset_url, int(asset_size or 0))
+            # 안전 가드: 정말로 새 버전인지 재확인 (동일/구버전 업데이트 방지)
+            chk = updater.check_latest()
+            if not chk.get("ok"):
+                return {"ok": False, "error": chk.get("error", "업데이트 확인 실패")}
+            if not chk.get("has_update"):
+                return {"ok": False, "error": "이미 최신 버전입니다."}
+            url = chk.get("asset_url") or asset_url
+            if not url:
+                return {"ok": False, "error": "다운로드할 파일을 찾을 수 없습니다."}
+            updater.start(url, int(chk.get("asset_size") or asset_size or 0))
             return {"ok": True}
         except Exception as e:
             return _err(e)

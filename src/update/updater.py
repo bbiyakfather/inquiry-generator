@@ -162,9 +162,9 @@ def _worker(asset_url: str, asset_size: int):
             # 단일 폴더가 없으면 staging 자체를 앱 루트로 간주
             staging_app = staging
 
-        _set(phase="ready", pct=100,
-             msg=f"준비 완료 — {staging_app}",
-             error="")
+        with _lock:
+            _state["staging_app"] = staging_app
+        _set(phase="ready", pct=100, msg="준비 완료", error="")
 
     except Exception as e:
         _set(phase="error", error=str(e), msg="")
@@ -179,11 +179,18 @@ def status() -> dict:
 
 # ── 4) 업데이트 적용 (배치 작성 + detached 실행) ───────────────────────────────
 
-def apply(pid: int, install_dir: str, app_exe_name: str) -> dict:
-    """updater 배치를 %TEMP%\\navion_update 에 쓰고 detached 실행한다.
+def _ps_quote(s: str) -> str:
+    """PowerShell 단일따옴표 문자열용 이스케이프 (' → '')."""
+    return str(s).replace("'", "''")
 
-    호출 측이 이 함수 반환 직후 창을 종료해야 한다.
-    frozen 아닐 때는 오류를 반환한다(배치 교체는 EXE 환경에서만 의미있음).
+
+def apply(pid: int, install_dir: str, app_exe_name: str) -> dict:
+    """updater PowerShell 스크립트를 %TEMP%\\navion_update 에 쓰고 detached 실행.
+
+    배치(chcp 65001) 대신 PowerShell을 쓰는 이유: 한글 경로를 유니코드로 안전하게
+    다루고, Wait-Process + 강제 종료 폴백, 교체 로그를 남기기 위함.
+    호출 측은 이 함수 반환 직후 창을 종료해야 한다(파일 잠금 해제).
+    frozen 아닐 때는 오류를 반환한다.
     """
     from src.paths import is_frozen
     if not is_frozen():
@@ -192,44 +199,61 @@ def apply(pid: int, install_dir: str, app_exe_name: str) -> dict:
     with _lock:
         if _state.get("phase") != "ready":
             return {"ok": False, "error": "아직 다운로드가 완료되지 않았습니다."}
-        staging_app = _state.get("msg", "").replace("준비 완료 — ", "").strip()
+        staging_app = _state.get("staging_app", "")
 
     if not staging_app or not os.path.isdir(staging_app):
         return {"ok": False, "error": "압축 해제 폴더를 찾을 수 없습니다."}
 
-    staging_root = _work_dir()
-    bat_path = os.path.join(staging_root, "apply_update.bat")
+    work = _work_dir()
+    ps_path = os.path.join(work, "apply_update.ps1")
+    log_path = os.path.join(work, "update-log.txt")
     app_exe = os.path.join(install_dir, app_exe_name)
 
-    # 경로에 따옴표가 필요한 경우를 위해 인용
-    def q(p):
-        return f'"{p}"'
-
-    bat_lines = [
-        "@echo off",
-        "chcp 65001 >nul",
-        f"set PID={pid}",
-        ":wait",
-        f"tasklist /fi \"PID eq %PID%\" 2>nul | find \"{pid}\" >nul",
-        "if not errorlevel 1 ( timeout /t 1 /nobreak >nul & goto wait )",
-        f"robocopy {q(staging_app)} {q(install_dir)} /E /IS /IT /R:2 /W:1 >nul",
-        f"start \"\" {q(app_exe)}",
-        f"rmdir /s /q {q(staging_root)}",
-        "(goto) 2>nul & del \"%~f0\"",
-    ]
+    ps = f"""# 내비온 자동 업데이트 적용 (PowerShell, UTF-8 BOM)
+$ErrorActionPreference = 'Continue'
+$log = '{_ps_quote(log_path)}'
+function Log($m) {{ "$([DateTime]::Now.ToString('HH:mm:ss')) $m" | Out-File -FilePath $log -Append -Encoding utf8 }}
+$targetPid = {int(pid)}
+$staging = '{_ps_quote(staging_app)}'
+$install = '{_ps_quote(install_dir)}'
+$exe     = '{_ps_quote(app_exe)}'
+$work    = '{_ps_quote(work)}'
+Log "updater 시작 pid=$targetPid"
+# 1) 대상 앱 종료 대기 (최대 30초) → 안 죽으면 강제 종료
+$deadline = [DateTime]::Now.AddSeconds(30)
+while (Get-Process -Id $targetPid -ErrorAction SilentlyContinue) {{
+    if ([DateTime]::Now -gt $deadline) {{ Log '타임아웃 - 강제 종료'; Stop-Process -Id $targetPid -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 1; break }}
+    Start-Sleep -Milliseconds 500
+}}
+Log '대상 프로세스 종료 확인'
+Start-Sleep -Seconds 1
+# 2) 파일 교체 (덮어쓰기, 삭제 없음 → kordoc-runtime·config·token 보존)
+robocopy $staging $install /E /IS /IT /R:3 /W:1 | Out-Null
+Log "robocopy 종료코드 $LASTEXITCODE"
+# 3) 새 버전 재실행
+Start-Process -FilePath $exe -WorkingDirectory $install
+Log '재실행 완료'
+# 4) 정리 (스크립트·로그는 다음 실행에서 덮임)
+Start-Sleep -Seconds 2
+Remove-Item -LiteralPath (Join-Path $work 'staging') -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $work 'download.zip') -Force -ErrorAction SilentlyContinue
+Log '정리 완료'
+"""
 
     try:
-        with open(bat_path, "w", encoding="utf-8") as fp:
-            fp.write("\r\n".join(bat_lines) + "\r\n")
+        # PowerShell 5.1은 BOM 없는 .ps1을 ANSI로 읽어 한글 경로가 깨진다 → utf-8-sig(BOM)
+        with open(ps_path, "w", encoding="utf-8-sig") as fp:
+            fp.write(ps)
     except Exception as e:
-        return {"ok": False, "error": f"배치 파일 작성 실패: {e}"}
+        return {"ok": False, "error": f"업데이트 스크립트 작성 실패: {e}"}
 
     try:
         import subprocess
         DETACHED_PROCESS = 0x00000008
         CREATE_NO_WINDOW = 0x08000000
         subprocess.Popen(
-            ["cmd", "/c", bat_path],
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+             "-WindowStyle", "Hidden", "-File", ps_path],
             creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
             close_fds=True,
         )
