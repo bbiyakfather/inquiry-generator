@@ -141,6 +141,22 @@
             <div id="gs-result" class="gs-result hidden"></div>
           </div>
 
+          <div class="card form-card goalseek-info-card">
+            <h3 class="info-title">⚖ 인건비 자동조정 방식 안내</h3>
+            <dl class="info-dl">
+              <dt>인건비 자동조정 (권장)</dt>
+              <dd>목표금액에 정확히 일치하도록 직급별 명수·참여율을 자동 계산합니다. 책임연구원은 1명/참여율 10%로 고정하고, 나머지 직급의 참여율을 스케일하며 보조원 명수를 최대 인원까지 탄력 운영합니다. 만 원 미만 잔액은 절삭합니다.</dd>
+              <dt>균등 참여율</dt>
+              <dd>모든 직급의 참여율을 동일 배율로 조정해 목표금액에 맞춥니다. 직급 간 비율을 유지하면서 전체를 올리거나 낮춥니다.</dd>
+              <dt>현재 비율 유지</dt>
+              <dd>각 직급의 현재 참여율 비율을 그대로 유지하면서 배율만 조정합니다. 이미 원하는 구성이 잡혀 있을 때 금액만 맞추는 용도입니다.</dd>
+              <dt>🔒 고정 체크박스</dt>
+              <dd>체크한 직급은 자동조정에서 제외됩니다. 예외 인원·참여율을 그대로 유지하고 나머지 직급만 조정할 때 사용합니다.</dd>
+              <dt>인건비·경비 비율</dt>
+              <dd>설정 탭 → 인건비·경비 목표 비율에서 조정합니다. 기본값은 목표금액의 50%를 인건비로, 나머지(직접비 − 인건비 목표)를 경비로 배분합니다. 경비 목표값은 AI 초안 프롬프트와 예산 가이드 카드에 반영됩니다.</dd>
+            </dl>
+          </div>
+
           <div class="card form-card">
             <h3>인건비 <span class="h-sub" id="price-year-label"></span></h3>
             <table class="input-table" id="labor-table">
@@ -419,6 +435,26 @@
           <div class="form-grid" id="maxcnt-grid"></div>
           <p class="hint">※ 책임연구원은 규칙상 항상 1명으로 고정됩니다(참여율 10%). 보조원 명수가 이 한도까지 탄력 운영됩니다.</p>
           <button id="btn-save-maxcnt" class="btn btn-outline">최대 인원 저장</button>
+        </div>
+
+        <div class="card form-card">
+          <h3>인건비·경비 목표 비율 <span class="h-sub">예산 가이드 및 AI 초안 기준</span></h3>
+          <div class="form-grid">
+            <label>인건비 비율 (목표금액 대비)
+              <div class="inline-row" style="gap:6px;align-items:center">
+                <input id="s-labor-ratio" type="number" min="10" max="90" step="1" value="50" style="width:72px">
+                <span>%</span>
+              </div>
+            </label>
+            <label>경비 목표 (자동 역산)
+              <div class="inline-row" style="gap:6px;align-items:center">
+                <span id="s-expense-ratio-hint" class="folder-path" style="font-size:12px">직접비 − 인건비 목표</span>
+              </div>
+            </label>
+          </div>
+          <p class="hint">※ 인건비 목표 = 목표금액 × 비율. 경비 목표는 (직접비 − 인건비 목표)로 자동 역산됩니다.
+            AI 초안의 「경비 항목 합계 가이드」와 편집기 예산 가이드 카드에 반영됩니다. (기본값 50%)</p>
+          <button id="btn-save-labor-ratio" class="btn btn-outline">비율 저장</button>
         </div>
 
         <div class="card form-card">

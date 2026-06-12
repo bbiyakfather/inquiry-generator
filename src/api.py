@@ -244,6 +244,7 @@ class Api:
                            for t in cs.AI_PROMPT_DOC_TYPES},
             "ai_prompt_defaults": dict(ai_engine.DIRECTIVE_DEFAULTS),
             "max_counts": cfg.get("labor", {}).get("max_counts", {}),
+            "labor_ratio": cs.get_labor_ratio(cfg),
             "last_folder": cfg.get("last_folder", ""),
             # 문서 유형별 작업 폴더 (UI 시딩용 — 폴백 적용된 실효값)
             "doc_folders": {
@@ -457,7 +458,8 @@ class Api:
             target = payload.get("goal", {}).get("target")
             guide = None
             if target:
-                g = budget_guide(float(target), profit_on)
+                labor_ratio = cs.get_labor_ratio(self.cfg)
+                g = budget_guide(float(target), profit_on, labor_ratio=labor_ratio)
                 guide = {
                     "budget": fmt_won(g.budget),
                     "vat": fmt_won(g.vat), "cost": fmt_won(g.cost),
@@ -526,6 +528,17 @@ class Api:
                     pass
             cs.save_config(self.cfg)
             return {"ok": True, "max_counts": cur}
+        except Exception as e:
+            return _err(e)
+
+    def set_labor_ratio(self, ratio):
+        """인건비 목표 비율 저장 (목표금액 대비, 0.1~0.9)."""
+        try:
+            r = max(0.1, min(0.9, float(ratio)))
+            cs.set_labor_ratio(self.cfg, r)
+            return {"ok": True, "labor_ratio": r}
+        except (TypeError, ValueError):
+            return _err("유효한 비율값이 아닙니다")
         except Exception as e:
             return _err(e)
 
@@ -697,7 +710,8 @@ class Api:
             model = cs.get_ai_model(self.cfg, provider)
             year = self.cfg["default_price_year"]
             prices = self.cfg["unit_prices"].get(year, {})
-            g = budget_guide(target, profit_on)
+            g = budget_guide(target, profit_on,
+                             labor_ratio=cs.get_labor_ratio(self.cfg))
 
             res = ai_engine.draft_quote(
                 provider, description=desc, target=int(target), profit_on=profit_on,

@@ -183,17 +183,19 @@ class BudgetGuide:
     profit: float          # C15 이윤
     mgmt: float            # C16 일반관리비
     direct: float          # C17 인건비+경비
-    labor_target: float    # C18 인건비 목표 (총계×0.5)
-    expense_target: float  # C19 경비 목표
+    labor_target: float    # C18 인건비 목표 (총계 × labor_ratio)
+    expense_target: float  # C19 경비 목표 (직접비 − 인건비 목표, 음수 시 0 클램프)
 
 
-def budget_guide(budget: float, profit_on: bool = True) -> BudgetGuide:
+def budget_guide(budget: float, profit_on: bool = True,
+                 labor_ratio: float = 0.5) -> BudgetGuide:
     vat = budget - budget / (1 + VAT_RATE)                 # C13
     cost = budget - vat                                    # C14
     profit = (cost - cost / (1 + PROFIT_RATE)) if profit_on else 0.0   # C15
     mgmt = (cost - profit) - (cost - profit) / (1 + MGMT_RATE)         # C16
     direct = cost - profit - mgmt                          # C17
-    labor_target = budget * 0.5                            # C18
-    expense_target = direct - labor_target                 # C19
+    ratio = max(0.0, min(1.0, float(labor_ratio)))
+    labor_target = budget * ratio                          # C18
+    expense_target = max(0.0, direct - labor_target)       # C19
     return BudgetGuide(budget, vat, cost, profit, mgmt, direct,
                        labor_target, expense_target)

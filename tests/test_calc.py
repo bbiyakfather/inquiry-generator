@@ -137,6 +137,18 @@ class TestBudgetGuide:
         assert g.profit == 0.0
         assert g.direct == pytest.approx(g.cost / 1.05, rel=1e-12)
 
+    def test_guide_custom_labor_ratio(self):
+        g = budget_guide(20000000, profit_on=True, labor_ratio=0.6)
+        assert g.labor_target == pytest.approx(12000000, abs=1)
+        assert g.expense_target == pytest.approx(
+            max(0.0, g.direct - 12000000), abs=1)
+
+    def test_guide_labor_ratio_high_clamps_expense(self):
+        # 인건비 비율이 너무 높으면 경비 목표는 0으로 클램프
+        g = budget_guide(20000000, profit_on=True, labor_ratio=0.9)
+        assert g.expense_target == 0.0
+        assert g.labor_target == pytest.approx(18000000, abs=1)
+
 
 class TestExpenseAmountEdge:
     """경비 금액 엣지케이스 (리뷰 발견 수정 검증)."""

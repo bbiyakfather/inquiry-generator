@@ -52,7 +52,11 @@ DEFAULT_CONFIG = {
     "default_price_year": "2026",
     # 인건비 자동조정 — 직급별 최대 인원(전역 기본값, 견적별 조정 가능).
     # 책임연구원은 규칙상 항상 1명이라 조정 대상 아님.
-    "labor": {"max_counts": {"연구원": 5, "연구보조원": 5, "보조원": 10}},
+    "labor": {
+        "max_counts": {"연구원": 5, "연구보조원": 5, "보조원": 10},
+        # 인건비 목표 비율 (목표금액 대비, 0.1~0.9). 경비 목표 = 직접비 − 인건비 목표.
+        "labor_ratio": 0.5,
+    },
     "gemini": {"api_key_enc": "", "model": "gemini-flash-latest"},
     # 멀티 AI 프로바이더: gemini 키는 위 "gemini"에 유지(하위호환),
     # openai·anthropic는 아래에 저장. provider가 현재 선택된 프로바이더.
@@ -234,6 +238,20 @@ def set_ai_prompt(cfg: dict, doc_type: str, text: str) -> dict:
     cfg.setdefault("ai_prompts", {})[doc_type] = str(text or "")
     save_config(cfg)
     return cfg
+
+
+def get_labor_ratio(cfg: dict) -> float:
+    """인건비 목표 비율 (목표금액 대비). 기본 0.5 (50%)."""
+    v = (cfg.get("labor") or {}).get("labor_ratio", 0.5)
+    try:
+        return max(0.1, min(0.9, float(v)))
+    except (TypeError, ValueError):
+        return 0.5
+
+
+def set_labor_ratio(cfg: dict, ratio: float) -> None:
+    cfg.setdefault("labor", {})["labor_ratio"] = max(0.1, min(0.9, float(ratio)))
+    save_config(cfg)
 
 
 def get_minutes_tpl(cfg: dict) -> str:

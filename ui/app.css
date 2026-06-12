@@ -212,6 +212,12 @@ svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;
   font-size:13px;color:#0E7A45;line-height:1.6}
 .gs-result.warn{background:var(--orange-soft);color:#B45309}
 .gs-result.err{background:var(--red-soft);color:var(--red)}
+.goalseek-info-card{background:var(--bg2,#f8f9fc);border:1px solid var(--line)}
+.goalseek-info-card .info-title{font-size:12.5px;font-weight:700;color:var(--ink2);margin-bottom:10px}
+.info-dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:12px}
+.info-dl dt{font-weight:700;color:var(--ink2);padding-top:2px;white-space:nowrap}
+.info-dl dd{margin:0;color:var(--ink3);line-height:1.6;padding-bottom:6px;border-bottom:1px solid var(--line)}
+.info-dl dd:last-child{border-bottom:none}
 
 /* 입력 테이블 */
 .input-table{width:100%;border-collapse:collapse}

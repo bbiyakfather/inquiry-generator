@@ -969,6 +969,7 @@ function renderSettings() {
   ySel.innerHTML = years.map(y => `<option value="${y}" ${y === cfg.default_price_year ? 'selected' : ''}>${y}년</option>`).join('');
   renderPriceTable(ySel.value || cfg.default_price_year);
   renderMaxCounts();
+  renderLaborRatio();
   // AI 제공사·모델
   $('#s-ai-provider').value = cfg.ai_provider || 'gemini';
   renderAIProvider();
@@ -1026,6 +1027,21 @@ async function saveMaxCounts() {
   const r = await call('set_max_counts', counts);
   if (r.ok) { state.config.max_counts = r.max_counts; toast('최대 인원 저장 완료', 'ok'); }
   else toast(r.error || '저장 실패', 'err');
+}
+
+function renderLaborRatio() {
+  const ratio = Math.round(((state.config && state.config.labor_ratio) || 0.5) * 100);
+  $('#s-labor-ratio').value = ratio;
+}
+
+async function saveLaborRatio() {
+  const pct = parseInt($('#s-labor-ratio').value, 10);
+  if (isNaN(pct) || pct < 10 || pct > 90) { toast('비율은 10~90% 사이로 입력하세요', 'warn'); return; }
+  const r = await call('set_labor_ratio', pct / 100);
+  if (r.ok) {
+    state.config.labor_ratio = r.labor_ratio;
+    toast(`인건비 비율 ${pct}% 저장 완료`, 'ok');
+  } else toast(r.error || '저장 실패', 'err');
 }
 
 async function savePrices() {
@@ -2006,6 +2022,7 @@ async function init() {
   $('#btn-add-year').addEventListener('click', addYear);
   $('#btn-save-prices').addEventListener('click', savePrices);
   $('#btn-save-maxcnt').addEventListener('click', saveMaxCounts);
+  $('#btn-save-labor-ratio').addEventListener('click', saveLaborRatio);
   $('#btn-save-company').addEventListener('click', saveCompany);
   $('#s-ai-provider').addEventListener('change', async () => {
     const p = currentProvider();
