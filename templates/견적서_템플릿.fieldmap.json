@@ -1,9 +1,9 @@
 {
   "version": 1,
   "template": "견적서_템플릿.hwp",
-  "is_standard": false,
+  "is_standard": true,
   "max_labor": 4,
-  "max_exp": 2,
+  "max_exp": 8,
   "field_map": {},
   "unmapped": []
 }

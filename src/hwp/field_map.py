@@ -18,7 +18,8 @@ from src.engine.calc import (QuoteResult, fmt_won, fmt_pct, fmt_num, fmt_rate,
 from src.engine.money_kor import amount_kor
 
 MAX_LABOR = 4
-MAX_EXP = 8
+MAX_EXP = 8          # 템플릿 기본 경비 행수 (이보다 많으면 생성 시 행을 동적 추가)
+EXP_HARD_LIMIT = 30  # 경비 행 동적 확장 안전 상한 (표 폭주·생성 지연 방지)
 
 
 @dataclass
@@ -69,9 +70,11 @@ def build_render_plan(doc: dict, result: QuoteResult, company: dict = None) -> R
     if len(labor_rows) > MAX_LABOR:
         warnings.append(f"인건비 직급이 {MAX_LABOR}개를 초과해 앞 {MAX_LABOR}개만 출력합니다.")
         labor_rows = labor_rows[:MAX_LABOR]
-    if len(exp_rows) > MAX_EXP:
-        warnings.append(f"경비 항목이 {MAX_EXP}개를 초과해 앞 {MAX_EXP}개만 출력합니다.")
-        exp_rows = exp_rows[:MAX_EXP]
+    # 경비는 8개 초과 시 생성 단계에서 표 행을 동적 추가하므로 자르지 않는다.
+    # 단, 비정상 입력으로 인한 표 폭주·생성 지연 방지를 위해 안전 상한만 둔다.
+    if len(exp_rows) > EXP_HARD_LIMIT:
+        warnings.append(f"경비 항목이 {EXP_HARD_LIMIT}개를 초과해 앞 {EXP_HARD_LIMIT}개만 출력합니다.")
+        exp_rows = exp_rows[:EXP_HARD_LIMIT]
     if not labor_rows:
         warnings.append("인건비 행이 없습니다. 최소 1개 직급이 필요합니다.")
 

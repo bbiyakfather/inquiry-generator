@@ -112,6 +112,58 @@ def test_roundtrip_22m_golden():
     assert "2023년 11월 23일" not in body
 
 
+def test_expense_overflow_adds_rows():
+    """경비 12개(템플릿 8행 초과) → 행을 동적 추가, 9~12번째도 본문에 반영."""
+    from src.hwp.hwp_writer import generate_once
+
+    labor = [LaborRow("책임연구원", 6993408, count=1, rate=0.4, months=0.75)]
+    expenses = [
+        ExpenseRow(f"추가경비{i:02d}", details=[f"- 내역{i}"],
+                   qty_text="1식", unit_price=100000, qty=1)
+        for i in range(1, 13)
+    ]
+    result = calculate(labor, expenses, profit_on=True, trim=0.0)
+    plan = build_render_plan(_golden_doc(), result)
+    assert plan.exp_used == 12  # 8개로 잘리지 않음
+
+    out_hwp = os.path.join(OUT_DIR, "roundtrip_exp12.hwp")
+    report = generate_once(
+        {"fields": plan.fields, "labor_used": plan.labor_used,
+         "exp_used": plan.exp_used, "show_trim": plan.show_trim},
+        out_hwp, None)
+    assert report["hwp"] and os.path.getsize(out_hwp) > 10000
+
+    import olefile
+    ole = olefile.OleFileIO(out_hwp)
+    body = _read_bodytext(ole)
+    ole.close()
+    # 동적 추가된 9~12번째 경비 항목명이 실제 본문에 들어가야 한다
+    for i in (1, 8, 9, 12):
+        assert f"추가경비{i:02d}" in body, f"경비{i:02d} 본문 누락(행 추가 실패)"
+
+
+def test_output_writable_when_template_readonly(tmp_path):
+    """템플릿이 읽기 전용이어도 생성된 견적서는 편집 가능(쓰기 가능)해야 한다."""
+    import shutil
+    import stat as _stat
+    from src.hwp.hwp_writer import generate_once, TEMPLATE_DEFAULT
+
+    ro_tpl = str(tmp_path / "ro_template.hwp")
+    shutil.copy2(TEMPLATE_DEFAULT, ro_tpl)
+    os.chmod(ro_tpl, _stat.S_IREAD)  # 템플릿을 읽기 전용으로 강제
+    try:
+        plan = build_render_plan(_golden_doc(), _golden_result())
+        out_hwp = os.path.join(OUT_DIR, "roundtrip_ro.hwp")
+        report = generate_once(
+            {"fields": plan.fields, "labor_used": plan.labor_used,
+             "exp_used": plan.exp_used, "show_trim": plan.show_trim},
+            out_hwp, None, template=ro_tpl)
+        assert report["hwp"]
+        assert os.access(out_hwp, os.W_OK), "생성된 견적서가 읽기 전용입니다(편집 불가)"
+    finally:
+        os.chmod(ro_tpl, _stat.S_IWRITE)  # tmp 정리 가능하도록 해제
+
+
 def test_no_profit_and_trim_variant():
     """무이윤 + 절삭 행 케이스: 목표 30,000,000."""
     from src.engine.goalseek import goal_seek

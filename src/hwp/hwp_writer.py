@@ -10,6 +10,7 @@ import glob
 import os
 import queue
 import shutil
+import stat
 import subprocess
 import threading
 import time
@@ -232,6 +233,44 @@ def _load_fieldmap_for(template_path: str) -> dict:
         return {}
 
 
+def _clear_readonly(path: str):
+    """파일의 읽기 전용 속성을 해제 (쓰기 가능하게).
+
+    shutil.copy2가 템플릿의 읽기 전용 비트까지 복사하면 생성된 견적서가
+    '읽기 전용'으로 열려 수동 편집이 막힌다. 복사 직후·저장 직후에 호출해
+    항상 편집 가능한 산출물을 보장한다(없는 파일·권한 오류는 무시)."""
+    try:
+        if os.path.exists(path):
+            os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+    except OSError:
+        pass
+
+
+def _expand_expense_rows(hwp, start_row: int, end_row: int, tpl_name):
+    """경비 표의 마지막 행 아래로 행을 동적 추가하고 표준 슬롯 필드를 부여.
+
+    템플릿 기본 경비 행수(보통 8)를 초과하는 견적을 위해, 마지막 경비 행
+    바로 아래에 (end_row - start_row)개 행을 만들고 각 행에
+    exp{i}_(name|detail|qty|price|amt|ratio) 셀필드를 부여한다.
+    make_template.py의 행 추가 패턴(InsertLowerRow + LowerCell + RightCell)과 동일.
+
+    새로 부여하는 필드명은 표준 슬롯명(exp{i}_*)이라 PutFieldText의
+    표준→템플릿 번역과 자연히 일치한다(매핑에 없으면 그대로 사용).
+    """
+    for i in range(start_row + 1, end_row + 1):
+        # 직전 경비 행의 첫 열(name)로 이동 → 그 아래에 새 행 삽입
+        if not hwp.MoveToField(tpl_name(f"exp{i-1}_name"), True, True, False):
+            break
+        hwp.Run("TableInsertLowerRow")
+        hwp.Run("TableLowerCell")  # 새 행의 같은 열(첫 열)로 진입
+        names = [f"exp{i}_name", f"exp{i}_detail", f"exp{i}_qty",
+                 f"exp{i}_price", f"exp{i}_amt", f"exp{i}_ratio"]
+        for j, nm in enumerate(names):
+            if j > 0:
+                hwp.Run("TableRightCell")
+            hwp.SetCurFieldName(nm, option=1, direction="", memo="")
+
+
 def _fill_document(hwp, plan: dict, out_hwp: str, out_pdf: str = None,
                    template: str = TEMPLATE_DEFAULT,
                    fieldmap: dict = None) -> dict:
@@ -253,7 +292,11 @@ def _fill_document(hwp, plan: dict, out_hwp: str, out_pdf: str = None,
         return std_to_tpl.get(std_name, std_name)
 
     os.makedirs(os.path.dirname(os.path.abspath(out_hwp)), exist_ok=True)
+    # 기존 산출물이 읽기 전용이면 copy2가 PermissionError(WinError 5)를 낼 수 있으므로 먼저 해제
+    _clear_readonly(out_hwp)
     shutil.copy2(template, out_hwp)
+    # copy2가 템플릿의 읽기 전용 비트까지 복사 → 즉시 해제(편집 가능한 사본 보장)
+    _clear_readonly(out_hwp)
     hwp.open(out_hwp, arg="forceopen:true")
 
     def delete_row_at_field(name):
@@ -261,9 +304,15 @@ def _fill_document(hwp, plan: dict, out_hwp: str, out_pdf: str = None,
             hwp.Run("TableDeleteRow")
             report["deleted_rows"].append(name)
 
-    # 미사용 행 삭제 (아래쪽부터)
     labor_used = max(1, min(max_labor_tpl, int(plan["labor_used"])))
-    exp_used = max(1, min(max_exp_tpl, int(plan["exp_used"])))
+    exp_used = max(1, int(plan["exp_used"]))
+
+    # 경비 항목이 템플릿 기본 행수보다 많으면 행을 동적 추가 (9개 이상 누락 방지)
+    if exp_used > max_exp_tpl:
+        _expand_expense_rows(hwp, max_exp_tpl, exp_used, tpl_name)
+        max_exp_tpl = exp_used
+
+    # 미사용 행 삭제 (아래쪽부터)
     for i in range(max_labor_tpl, labor_used, -1):
         delete_row_at_field(f"labor{i}_grade")
     for i in range(max_exp_tpl, exp_used, -1):
@@ -277,11 +326,13 @@ def _fill_document(hwp, plan: dict, out_hwp: str, out_pdf: str = None,
 
     # 저장
     hwp.save_as(out_hwp, format="HWP")
+    _clear_readonly(out_hwp)  # 한글이 읽기 전용 속성을 유지했을 경우 대비(편집 가능 보장)
     report["hwp"] = out_hwp
     if out_pdf:
         try:
             hwp.save_as(out_pdf, format="PDF")
             if os.path.exists(out_pdf) and os.path.getsize(out_pdf) > 0:
+                _clear_readonly(out_pdf)
                 report["pdf"] = out_pdf
             else:
                 report["pdf_error"] = "PDF 파일이 생성되지 않았습니다."

@@ -79,3 +79,34 @@ class TestRenderPlan:
         q.expense_rows[0].details = ["- 줄1", "- 줄2", "- 줄3"]
         plan = build_render_plan(DOC, q)
         assert plan.fields["exp1_detail"] == "- 줄1\r\n- 줄2\r\n- 줄3"
+
+
+class TestExpenseOverflow:
+    """경비 8개 초과 — 자르지 않고 모두 필드에 반영 (생성 시 행 동적 추가)."""
+
+    def _quote_with_n_expenses(self, n):
+        labor = [LaborRow("책임연구원", 6993408, count=1, rate=0.4, months=0.75)]
+        expenses = [
+            ExpenseRow(f"경비항목{i}", details=[f"- 내역{i}"],
+                       qty_text="1식", unit_price=10000 * i, qty=1)
+            for i in range(1, n + 1)
+        ]
+        return calculate(labor, expenses, profit_on=True, trim=0.0)
+
+    def test_twelve_expenses_not_truncated(self):
+        plan = build_render_plan(DOC, self._quote_with_n_expenses(12))
+        # 9~12번째 경비도 잘리지 않고 exp_used·필드에 반영되어야 한다
+        assert plan.exp_used == 12
+        assert plan.fields["exp9_name"] == "경비항목9"
+        assert plan.fields["exp12_name"] == "경비항목12"
+        assert "경비 항목이" not in " ".join(plan.warnings)
+
+    def test_eight_expenses_no_warning(self):
+        plan = build_render_plan(DOC, self._quote_with_n_expenses(8))
+        assert plan.exp_used == 8
+        assert plan.warnings == []
+
+    def test_hard_limit_caps_runaway(self):
+        plan = build_render_plan(DOC, self._quote_with_n_expenses(40))
+        assert plan.exp_used == 30  # EXP_HARD_LIMIT
+        assert any("30개" in w for w in plan.warnings)
