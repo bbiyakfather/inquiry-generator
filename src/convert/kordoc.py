@@ -28,7 +28,9 @@ from src.paths import data_path
 from src.logutil import log as _log
 
 # ---- 상수 ----
-KORDOC_SPEC = "kordoc@3"          # 메이저 고정 (자동 최신 추적 금지)
+KORDOC_SPEC = "kordoc@3"          # 검증된 메이저(3) 내 최신본을 매번 받음
+                                  # (CLI 명세가 v3 기준이라 메이저는 고정; 메이저를
+                                  #  올리려면 CLI 호출 명세 재검증 후 변경할 것)
 PDFJS_SPEC = "pdfjs-dist@4"       # kordoc PDF 변환 필수 peer dep
 NODE_MIN_MAJOR = 18
 INSTALL_TIMEOUT = 300             # npm install (초)
@@ -54,9 +56,32 @@ def _runtime_dir() -> str:
     return data_path("kordoc-runtime")
 
 
+def _node_tools_dir() -> str:
+    """동봉된 Node.js 도구(node.exe + npm) 폴더. 빌드 spec이 여기에만 넣는다.
+
+    무거운 kordoc node_modules(수백 MB)는 더 이상 빌드에 넣지 않는다.
+    사용자가 Node.js를 따로 설치하지 않아도 되도록 node.exe와 npm 도구만
+    이 폴더에 동봉하고, kordoc 본체는 첫 변환 때 npm으로 받아 설치한다."""
+    return os.path.join(_runtime_dir(), "_nodejs")
+
+
 def _bundled_node() -> str:
-    """배포 번들에 포함된 node.exe 경로. 없으면 빈 문자열 (개발 환경 폴백용)."""
-    p = os.path.join(_runtime_dir(), "node.exe")
+    """배포 번들에 포함된 node.exe 경로. 없으면 빈 문자열 (개발 환경 폴백용).
+
+    신규 레이아웃(_nodejs/node.exe) 우선, 구버전 호환으로 runtime 루트의
+    node.exe도 인정한다."""
+    for p in (os.path.join(_node_tools_dir(), "node.exe"),
+              os.path.join(_runtime_dir(), "node.exe")):
+        if os.path.isfile(p):
+            return p
+    return ""
+
+
+def _bundled_npm_cli() -> str:
+    """동봉된 npm의 npm-cli.js 경로 (bundled node로 직접 실행용). 없으면 빈 문자열.
+
+    .cmd 셸 의존 없이 `node npm-cli.js install ...`로 호출하기 위함."""
+    p = os.path.join(_node_tools_dir(), "node_modules", "npm", "bin", "npm-cli.js")
     return p if os.path.isfile(p) else ""
 
 
@@ -89,8 +114,25 @@ def node_info() -> dict:
 
 
 def npm_path():
-    """npm 실행 파일 경로 (Windows에서는 npm.cmd). 없으면 None."""
+    """npm 실행 파일 경로 (Windows에서는 npm.cmd). 없으면 None.
+    동봉 npm.cmd(_nodejs/) 우선, 없으면 시스템 PATH의 npm을 찾는다."""
+    bundled = os.path.join(_node_tools_dir(), "npm.cmd")
+    if os.path.isfile(bundled):
+        return bundled
     return shutil.which("npm")
+
+
+def _npm_base_cmd():
+    """npm 호출 커맨드 프리픽스(리스트).
+
+    동봉 node+npm이 있으면 [node.exe, npm-cli.js]로 .cmd 셸 의존 없이 직접
+    실행하고(가장 견고), 없으면 [npm 경로]로 폴백한다. None이면 npm 없음."""
+    node = _bundled_node()
+    cli = _bundled_npm_cli()
+    if node and cli:
+        return [node, cli]
+    npm = npm_path()
+    return [npm] if npm else None
 
 
 def _kordoc_pkg_dir() -> str:
@@ -150,8 +192,8 @@ def ensure_kordoc(progress_cb=None) -> dict:
             progress_cb({"phase": "install", "msg": "kordoc 설치 중..."})
         rt = _runtime_dir()
         os.makedirs(rt, exist_ok=True)
-        cmd = [npm, "install", "--prefix", rt, KORDOC_SPEC, PDFJS_SPEC,
-               "--no-audit", "--no-fund", "--loglevel=error"]
+        cmd = _npm_base_cmd() + ["install", "--prefix", rt, KORDOC_SPEC,
+               PDFJS_SPEC, "--no-audit", "--no-fund", "--loglevel=error"]
         _log(f"kordoc 설치 시작: {' '.join(cmd)}")
         t0 = time.time()
         try:

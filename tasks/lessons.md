@@ -1,5 +1,39 @@
 # 교훈 기록 (Lessons Learned)
 
+## 2026-06-17: 견적서 '읽기 전용'의 진범 — 생성 후 문서를 안 닫아 백그라운드 한글이 파일 잠금 (v1.2.7)
+- **발생**: 생성된 견적서를 열면 한글이 '읽기 전용'으로 연다. OS 읽기전용 비트 해제
+  (`_clear_readonly`, chmod)를 v1.2.6에 넣었는데도 "여전히 동일".
+- **원인(확정)**: `HwpWorker`는 한글 COM 세션을 **재사용**(종료 안 함)하는데,
+  `_fill_document`이 `save_as` 후 문서를 **닫지 않았다**. 숨김 한글이 산출물 파일을
+  계속 열어둔 채 잡고 있어, 사용자가 그 파일을 열면 한글이 "다른 곳에서 사용 중"
+  → 읽기 전용으로 연다. 파일 OS 속성과 무관 → chmod로는 절대 안 풀린다.
+  (대조: `_scan_fields_com`은 끝에 `FileClose`를 호출해 잠금을 풀고 있었음 — 차이가 단서.)
+- **수정**: `_fill_document` 끝(저장·PDF 후)에 `hwp.Run("FileClose")` 추가.
+- **검증**: 세션 유지 상태에서 산출물 `os.replace`(rename) 왕복 성공 = 잠금 풀림.
+  회귀 테스트 `test_output_not_locked_under_persistent_session` 추가(OS속성만 보던 기존
+  테스트는 이 원인을 못 잡음).
+- **방지책**: COM 세션을 재사용하는 모든 경로는 파일 작업 끝에 반드시 `FileClose`로
+  핸들을 풀 것. "쓰기 가능(W_OK)"만 검사하지 말고 "잠금 해제(rename 가능)"까지 검증.
+
+## 2026-06-17: 경비 8행 초과 동적 추가 행이 '경비' 세로병합에서 빠짐 (v1.2.7)
+- **발생**: 경비 9개 이상이면 추가된 행의 좌측에 '경비' 라벨과 분리된 빈 셀이 생김(PDF 확인).
+- **원인**: `_expand_expense_rows`가 행만 추가하고 좌측 카테고리 열(‘경비’)을 병합 안 함.
+  새 행은 세로병합 영역 밖에 새 셀로 생성됨.
+- **수정**: 행 추가 후 exp_name 좌측('경비' 라벨셀)에서
+  `TableCellBlock → TableCellBlockExtend → TableLowerCell×추가행수 → TableMergeCell`.
+  실측으로 확정한 시퀀스(처음엔 Extend 없이 시도해 MergeCell이 False 반환 → Extend 필수).
+- **검증**: 경비 12개 케이스를 PDF로 렌더해 '경 비'가 12행 전체를 덮는 것 육안 확인.
+
+## 2026-06-17: kordoc 비내장화 — node.exe+npm만 동봉, kordoc은 첫 사용 시 npm 설치 (v1.2.7)
+- **배경**: 빌드 spec이 `kordoc-runtime/`(node_modules 754MB)를 통째로 dist에 복사 →
+  배포본 비대. `ensure_kordoc`는 이미 npm 설치 구조였는데 미리 깔아 통째 넣어 이점이 죽음.
+- **수정**: spec은 `kordoc-runtime/_nodejs/`에 node.exe + npm(node_modules/npm + npm.cmd)만
+  동봉. 첫 변환 때 `ensure_kordoc`이 `kordoc@3`(검증 메이저 내 최신) + `pdfjs-dist@4`를 설치.
+  운영 호출은 `.cmd` 셸 의존 없이 `[node.exe, npm-cli.js] install ...`로 직접 실행.
+- **검증**: 임시 `_nodejs/`로 시스템 Node 없이 `npm --version`(11.11.0)·소형 패키지 install 성공.
+- **유의**: 업데이터는 `robocopy /E`(삭제 없음)라 사용자가 받아둔 `node_modules/kordoc`는
+  업데이트 시 보존됨(재다운로드 불필요). 빌드머신엔 Node.js 설치 필수(없으면 spec 경고).
+
 ## 2026-06-10: bat 더블클릭 시 무반응/창 깜빡임 — UTF-8 한글 bat이 CP949 cmd에서 파싱 즉사 (진범)
 - **발생**: `견적서생성기.bat` 더블클릭 → 콘솔이 떴다 바로 꺼지고 앱은 시작조차 안 됨.
 - **원인(확정)**: bat 파일을 **UTF-8(한글 포함)**로 저장했는데, 한국어 Windows cmd는

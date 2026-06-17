@@ -256,7 +256,12 @@ def _expand_expense_rows(hwp, start_row: int, end_row: int, tpl_name):
 
     새로 부여하는 필드명은 표준 슬롯명(exp{i}_*)이라 PutFieldText의
     표준→템플릿 번역과 자연히 일치한다(매핑에 없으면 그대로 사용).
+
+    행 추가만 하면 새 행의 좌측(카테고리) 열에 '경비' 병합셀과 분리된
+    빈 셀이 생긴다 → 마지막에 '경비' 라벨 셀을 새 행들까지 세로 병합해
+    인쇄 시 '경비'가 전체 경비 행을 덮도록 한다(실측으로 확정한 시퀀스).
     """
+    added = 0
     for i in range(start_row + 1, end_row + 1):
         # 직전 경비 행의 첫 열(name)로 이동 → 그 아래에 새 행 삽입
         if not hwp.MoveToField(tpl_name(f"exp{i-1}_name"), True, True, False):
@@ -269,6 +274,19 @@ def _expand_expense_rows(hwp, start_row: int, end_row: int, tpl_name):
             if j > 0:
                 hwp.Run("TableRightCell")
             hwp.SetCurFieldName(nm, option=1, direction="", memo="")
+        added += 1
+
+    # '경비' 카테고리 라벨 셀을 새로 추가된 행들까지 세로 병합
+    # (exp_name 셀의 왼쪽 = '경비' 라벨 셀. TableCellBlock→Extend로 블록 잡고
+    #  추가 행 수만큼 아래로 확장 후 TableMergeCell — exp12 PDF 렌더로 검증함)
+    if added and hwp.MoveToField(tpl_name("exp1_name"), True, True, False):
+        hwp.Run("TableLeftCell")        # '경비' 라벨 셀로 이동
+        hwp.Run("TableCellBlock")       # 셀 블록 선택 시작
+        hwp.Run("TableCellBlockExtend")  # 확장 선택 모드 ON
+        for _ in range(added):          # 추가된 행 수만큼 아래로 블록 확장
+            hwp.Run("TableLowerCell")
+        hwp.Run("TableMergeCell")       # 셀 합치기
+        hwp.Run("Cancel")               # 선택 해제
 
 
 def _fill_document(hwp, plan: dict, out_hwp: str, out_pdf: str = None,
@@ -338,6 +356,15 @@ def _fill_document(hwp, plan: dict, out_hwp: str, out_pdf: str = None,
                 report["pdf_error"] = "PDF 파일이 생성되지 않았습니다."
         except Exception as e:
             report["pdf_error"] = f"PDF 변환 실패: {e}"
+
+    # 생성한 문서를 자동화(숨김) 한글 세션에서 닫아 파일 잠금을 해제한다.
+    # 닫지 않으면 재사용 세션이 out_hwp를 계속 열어둔 채로 잡고 있어,
+    # 사용자가 그 파일을 열면 한글이 "다른 곳에서 사용 중" → '읽기 전용'으로 연다
+    # (OS 읽기전용 속성 해제(_clear_readonly)로는 절대 풀리지 않는 진짜 원인).
+    try:
+        hwp.Run("FileClose")
+    except Exception:
+        pass
     return report
 
 

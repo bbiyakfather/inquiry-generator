@@ -164,6 +164,36 @@ def test_output_writable_when_template_readonly(tmp_path):
         os.chmod(ro_tpl, _stat.S_IWRITE)  # tmp 정리 가능하도록 해제
 
 
+def test_output_not_locked_under_persistent_session():
+    """재사용(숨김) 한글 세션에서 생성한 직후에도 산출물이 잠겨있지 않아야 한다.
+
+    진짜 '읽기 전용' 원인: 생성 후 문서를 닫지 않으면 백그라운드 한글이 파일을
+    계속 열어둔 채 잡고 있어, 사용자가 그 파일을 열면 '다른 곳에서 사용 중' →
+    읽기 전용으로 열린다(OS 속성 해제로는 못 푼다). 생성 끝에 FileClose로
+    잠금을 풀었는지, 세션을 종료하지 않은 채 파일 rename으로 확인한다.
+    """
+    from src.hwp.hwp_writer import HwpWorker
+
+    plan = build_render_plan(_golden_doc(), _golden_result())
+    out_hwp = os.path.join(OUT_DIR, "roundtrip_lock.hwp")
+    w = HwpWorker()
+    try:
+        rep = w.generate(
+            {"fields": plan.fields, "labor_used": plan.labor_used,
+             "exp_used": plan.exp_used, "show_trim": plan.show_trim},
+            out_hwp, None)
+        assert rep.get("ok"), rep.get("error")
+        # 세션을 닫기 전에(잠금이 남아있다면 여기서 실패) rename 왕복으로 잠금 확인
+        moved = out_hwp + ".movetest"
+        try:
+            os.replace(out_hwp, moved)
+            os.replace(moved, out_hwp)
+        except PermissionError:
+            raise AssertionError("생성물이 한글 세션에 잠겨 있습니다(읽기 전용 유발)")
+    finally:
+        w.shutdown()
+
+
 def test_no_profit_and_trim_variant():
     """무이윤 + 절삭 행 케이스: 목표 30,000,000."""
     from src.engine.goalseek import goal_seek

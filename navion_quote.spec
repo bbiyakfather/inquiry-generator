@@ -149,16 +149,16 @@ _shutil.copy(
     _os.path.join(_dist_dir, "내비온 견적서 생성기.exe.config"),
 )
 
-# kordoc-runtime 내장 — Node.js 별도 설치 불필요
-# PyInstaller 6.x는 datas를 _internal/ 아래로 복사하므로 data_path()가 찾지 못한다.
-# COLLECT 후 exe 옆에 직접 복사하고, 빌드 머신의 node.exe도 동봉한다.
-_kordoc_src = _os.path.join(SPECPATH, "kordoc-runtime")
+# kordoc 비내장(최적화) — 무거운 node_modules(수백 MB)는 빌드에 넣지 않는다.
+# 첫 변환 때 ensure_kordoc()가 npm으로 검증된 메이저(kordoc@3) 내 최신본을 받아
+# kordoc-runtime/node_modules 에 설치한다(사용자 PC, 1회). 빌드에는 사용자가
+# Node.js를 따로 설치하지 않아도 되도록 node.exe + npm 도구만 _nodejs/에 동봉한다.
+# 결과: 배포본이 수백 MB 줄어든다(예: 754MB node_modules 제외).
 _kordoc_dst = _os.path.join(_dist_dir, "kordoc-runtime")
+_nodejs_dst = _os.path.join(_kordoc_dst, "_nodejs")
 
-# npm이 설치한 node_modules에는 읽기 전용 파일이 섞여 있어 기본 shutil.rmtree가
-# WinError 5(액세스 거부)로 죽는다. 읽기 전용 비트를 풀고 재시도하는 핸들러를 단다.
-# (PyInstaller COLLECT의 _make_clean_directory도 같은 이유로 실패하므로, 빌드 전
-#  반드시 dist\...\kordoc-runtime 을 이 방식으로 정리해야 한다.)
+# npm이 깐 파일/이전 빌드 잔재엔 읽기 전용 비트가 섞여 있어 기본 rmtree가
+# WinError 5(액세스 거부)로 죽는다. 비트를 풀고 재시도하는 핸들러를 단다.
 import stat as _stat
 def _rm_readonly(_func, _path, _exc):
     try:
@@ -173,25 +173,34 @@ def _rmtree_safe(_p):
     except TypeError:
         _shutil.rmtree(_p, onerror=lambda f, p, e: _rm_readonly(f, p, e))
 
-if _os.path.isdir(_kordoc_src):
-    if _os.path.isdir(_kordoc_dst):
-        _rmtree_safe(_kordoc_dst)
-    _shutil.copytree(_kordoc_src, _kordoc_dst)
-    # 동봉 직후 읽기 전용 속성 제거 — 다음 빌드의 rmtree와 사용자 PC의 업데이트
-    # robocopy·삭제가 같은 WinError 5로 막히지 않도록 한다.
+# 이전 빌드의 kordoc-runtime 잔재 정리 후, node 도구만 새로 동봉
+if _os.path.isdir(_kordoc_dst):
+    _rmtree_safe(_kordoc_dst)
+_os.makedirs(_nodejs_dst, exist_ok=True)
+
+_node_src = _shutil.which("node")
+if _node_src and _os.path.isfile(_node_src):
+    _node_home = _os.path.dirname(_node_src)
+    # node.exe
+    _shutil.copy2(_node_src, _os.path.join(_nodejs_dst, "node.exe"))
+    # npm 패키지(node_modules/npm) — npm-cli.js를 bundled node로 직접 실행하는 데 필요
+    _npm_pkg_src = _os.path.join(_node_home, "node_modules", "npm")
+    if _os.path.isdir(_npm_pkg_src):
+        _shutil.copytree(_npm_pkg_src,
+                         _os.path.join(_nodejs_dst, "node_modules", "npm"))
+    # 셸 심(npm.cmd 등)도 함께 — npm.cmd는 같은 폴더의 node.exe·npm-cli.js를 찾는다
+    for _shim in ("npm", "npm.cmd", "npm.ps1", "npx", "npx.cmd"):
+        _s = _os.path.join(_node_home, _shim)
+        if _os.path.isfile(_s):
+            _shutil.copy2(_s, _os.path.join(_nodejs_dst, _shim))
+    # 동봉 파일 읽기 전용 비트 해제 — 다음 빌드 rmtree·사용자 업데이트 robocopy 보호
     for _r, _ds, _fs in _os.walk(_kordoc_dst):
         for _n in _fs:
             try:
                 _os.chmod(_os.path.join(_r, _n), _stat.S_IWRITE)
             except Exception:
                 pass
-    # 빌드 머신의 node.exe를 동봉 (사용자가 Node.js를 별도 설치할 필요 없음)
-    _node_dst = _os.path.join(_kordoc_dst, "node.exe")
-    if not _os.path.isfile(_node_dst):
-        _node_src = _shutil.which("node")
-        if _node_src and _os.path.isfile(_node_src):
-            _shutil.copy2(_node_src, _node_dst)
-            print(f"[spec] node.exe 동봉 완료: {_node_src} → {_node_dst}")
-        else:
-            print("[spec] 경고: 빌드 머신에 node.exe를 찾지 못했습니다. "
-                  "Node.js를 설치한 뒤 다시 빌드하세요.")
+    print(f"[spec] Node 도구 동봉 완료(node.exe+npm): {_node_home} -> {_nodejs_dst}")
+else:
+    print("[spec] 경고: 빌드 머신에 node.exe를 찾지 못했습니다. "
+          "Node.js를 설치한 뒤 다시 빌드하세요.")
