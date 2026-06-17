@@ -11,7 +11,7 @@
 __version__ = "1.2.6"
 
 # 자동 업데이트가 조회할 GitHub 저장소 ("owner/repo"). 공개 저장소 전제.
-GITHUB_REPO = "hikim1410-commits/inquiry-generator"
+GITHUB_REPO = "bbiyakfather/inquiry-generator"
 
 
 def parse_ver(s):
