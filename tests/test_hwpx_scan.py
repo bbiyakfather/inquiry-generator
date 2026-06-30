@@ -123,3 +123,52 @@ def test_scan_folder_skips_non_hwpx(tmp_path):
 
 def test_scan_folder_missing_dir():
     assert hx.scan_folder(r"C:\존재하지않는폴더\xyz") == []
+
+
+# ---- A-6-3: scan_hwpx_grid cellSpan 추출 + 좌표 라운드트립 ----
+
+from src.minutes.hwpx_minutes import TEMPLATE_MINUTES, _find_cell, _HP  # noqa: E402
+from xml.etree import ElementTree as ET  # noqa: E402
+
+
+def test_grid_cellspan_merged_counts():
+    """실측 양식: colspan=2 셀 5개, colspan=3 셀 1개 (A-6-3 수정1)."""
+    g = hx.scan_hwpx_grid(TEMPLATE_MINUTES)
+    assert g["ok"], g.get("error")
+    # 모든 셀에 colspan/rowspan 키가 있어야 함 (기본 1)
+    for c in g["cells"]:
+        assert c["colspan"] >= 1 and c["rowspan"] >= 1
+    span2 = [c for c in g["cells"] if c["colspan"] == 2]
+    span3 = [c for c in g["cells"] if c["colspan"] == 3]
+    assert len(span2) == 5, f"colspan=2 기대 5, 실제 {len(span2)}"
+    assert len(span3) == 1, f"colspan=3 기대 1, 실제 {len(span3)}"
+
+
+def test_grid_keys_backward_compatible():
+    """기존 키(row,col,text) 유지 + colspan/rowspan 추가만."""
+    g = hx.scan_hwpx_grid(TEMPLATE_MINUTES)
+    c = g["cells"][0]
+    assert set(["row", "col", "text", "colspan", "rowspan"]).issubset(c.keys())
+
+
+def test_grid_roundtrip_find_cell():
+    """그리드 좌표 전부가 _find_cell로 실셀을 찾는다 (A-6-3 수정2)."""
+    with zipfile.ZipFile(TEMPLATE_MINUTES) as zf:
+        root = ET.parse(zf.open("Contents/section0.xml")).getroot()
+    tbl = root.find(f".//{_HP}tbl")
+    g = hx.scan_hwpx_grid(TEMPLATE_MINUTES)
+    for c in g["cells"]:
+        assert _find_cell(tbl, c["row"], c["col"]) is not None, \
+            f"그리드 좌표 ({c['row']},{c['col']})가 실셀 아님"
+
+
+def test_grid_no_nested_table_leak():
+    """중첩 사진표 셀이 grid에 새지 않는다 (외부 표 직계만 순회).
+
+    중첩표는 (0,0)/(0,1) 좌표를 갖는데, 외부 표 row0은 colSpan=3 단일셀이라
+    (0,1)이 존재하지 않는다 → (0,1)이 grid에 있으면 누수.
+    """
+    g = hx.scan_hwpx_grid(TEMPLATE_MINUTES)
+    coords = {(c["row"], c["col"]) for c in g["cells"]}
+    assert (0, 1) not in coords, "중첩표 셀이 grid로 누수됨"
+    assert len(g["cells"]) == 14

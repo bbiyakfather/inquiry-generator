@@ -88,12 +88,27 @@ def _find_cell(tbl, row, col):
 
 
 def _set_simple_cell_text(tbl, row, col, text):
+    """단순 슬롯 텍스트를 셀에 쓴다. 구조가 없으면 방어적으로 생성(A-6-1).
+
+    tc가 None(좌표가 실셀 아님)이면 조용히 건너뛴다(미매핑=빈칸 정책).
+    빈 셀·병합 잔여 셀처럼 subList/p/run/t가 없어도 AttributeError 없이 보정.
+    기존 스타일 run이 있으면 보존, 없으면 charPrIDRef 기본값(0)으로 새 run 생성.
+    """
     tc = _find_cell(tbl, row, col)
     if tc is None:
         return
     sublist = tc.find(f'{_HP}subList')
+    if sublist is None:
+        sublist = ET.SubElement(tc, f'{_HP}subList')
     p = sublist.find(f'{_HP}p')
+    if p is None:
+        p = ET.SubElement(sublist, f'{_HP}p', {
+            'id': '0', 'paraPrIDRef': '0', 'styleIDRef': '0',
+            'pageBreak': '0', 'columnBreak': '0', 'merged': '0',
+        })
     run = p.find(f'{_HP}run')
+    if run is None:
+        run = ET.SubElement(p, f'{_HP}run', {'charPrIDRef': '0'})
     t = run.find(f'{_HP}t')
     if t is None:
         t = ET.SubElement(run, f'{_HP}t')
@@ -219,6 +234,7 @@ def build_minutes(data: dict, template_hwpx: str = None, out_path: str = None,
         return {"ok": False, "error": f"템플릿 없음: {template_hwpx}"}
 
     cells = _norm_cells(cell_map)
+    warnings = []
 
     tmp = tempfile.mkdtemp(prefix="minutes_")
     try:
@@ -297,6 +313,12 @@ def build_minutes(data: dict, template_hwpx: str = None, out_path: str = None,
                         or pp.find(f'.//{_HP}tbl') is not None):
                     photo_para = copy.deepcopy(pp)
                     break
+
+            # A-6-2: 표준 양식의 content 셀(6,1)은 사진표를 가지므로 photo_para!=None →
+            # 경고 없음(동작 불변). content를 사진표 없는 셀로 재매핑하면 photo_para가
+            # None이라 사진표가 재구성에 포함되지 않으므로(사일런트 소실) 경고로 가시화.
+            if photo_para is None:
+                warnings.append("사진표 없는 셀로 content 매핑됨")
 
             for old in list(sl6.findall(f'{_HP}p')):
                 sl6.remove(old)
@@ -389,7 +411,7 @@ def build_minutes(data: dict, template_hwpx: str = None, out_path: str = None,
                     arc = os.path.relpath(full, tmp).replace("\\", "/")
                     zf.write(full, arc, compress_type=zipfile.ZIP_DEFLATED)
 
-        return {"ok": True, "path": out_path}
+        return {"ok": True, "path": out_path, "warnings": warnings}
 
     except Exception as e:
         import traceback

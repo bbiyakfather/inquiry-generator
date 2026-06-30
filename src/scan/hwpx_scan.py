@@ -144,9 +144,11 @@ def parse_minutes_hwpx(path: str) -> MinutesMeta:
 def scan_hwpx_grid(path: str) -> dict:
     """회의록 HWPX 템플릿의 첫 번째 표 전체 셀을 그리드로 추출 (AI 분석 입력용).
 
-    반환: {ok, row_cnt, col_cnt, cells: [{row, col, text}, ...], error?}
+    반환: {ok, row_cnt, col_cnt, cells: [{row, col, text, colspan, rowspan}], error?}
     각 cell.text 는 라벨("사업명" 등) 또는 기존 샘플값. AI가 이 그리드를 보고
     표준 슬롯을 어느 값 셀(row,col)에 채울지 판단한다.
+    colspan/rowspan(cellSpan)은 병합셀을 HTML 표로 재구성할 때 사용(A-6-3).
+    외부 표 직계 tr/tc만 순회하므로 중첩표(사진표) 셀은 그리드에 포함되지 않는다.
     """
     try:
         with zipfile.ZipFile(path) as zf:
@@ -172,6 +174,12 @@ def scan_hwpx_grid(path: str) -> dict:
             except ValueError:
                 continue
             max_r, max_c = max(max_r, r), max(max_c, c)
+            span = tc.find(f"{_HP}cellSpan")
+            try:
+                colspan = int(span.attrib.get("colSpan", "1")) if span is not None else 1
+                rowspan = int(span.attrib.get("rowSpan", "1")) if span is not None else 1
+            except ValueError:
+                colspan = rowspan = 1
             sl = tc.find(f"{_HP}subList")
             txt = ""
             if sl is not None:
@@ -181,7 +189,8 @@ def scan_hwpx_grid(path: str) -> dict:
                     if line:
                         lines.append(line)
                 txt = " ⏎ ".join(lines)
-            cells.append({"row": r, "col": c, "text": txt[:120]})
+            cells.append({"row": r, "col": c, "text": txt[:120],
+                          "colspan": colspan, "rowspan": rowspan})
 
     return {"ok": True, "row_cnt": max_r + 1, "col_cnt": max_c + 1, "cells": cells}
 
