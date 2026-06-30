@@ -215,7 +215,7 @@ def _norm_cells(cell_map):
 
 
 def build_minutes(data: dict, template_hwpx: str = None, out_path: str = None,
-                  cell_map: dict = None) -> dict:
+                  cell_map: dict = None, custom_slots: list = None) -> dict:
     """MINUTES_SCHEMA 데이터 → HWPX 파일 생성.
 
     data keys:
@@ -255,6 +255,17 @@ def build_minutes(data: dict, template_hwpx: str = None, out_path: str = None,
         _set_simple_cell_text(tbl, *cells["meeting_date"], data.get("meeting_date", ""))
         _set_simple_cell_text(tbl, *cells["meeting_place"], data.get("meeting_place", ""))
         _set_simple_cell_text(tbl, *cells["meeting_topic"], data.get("meeting_topic", ""))
+
+        # 2b) 커스텀 슬롯 (정적 텍스트) — custom_slots cell 좌표에 data.custom_fields 기록.
+        # 미지정 슬롯은 빈 텍스트로 안전 생성, custom_slots 없으면 동작 불변(9-a (ii)).
+        custom_fields = data.get("custom_fields") or {}
+        for slot in (custom_slots or []):
+            sid = slot.get("id")
+            try:
+                r, c = int(slot["cell"][0]), int(slot["cell"][1])
+            except (TypeError, ValueError, IndexError, KeyError):
+                continue
+            _set_simple_cell_text(tbl, r, c, str(custom_fields.get(sid, "") or ""))
 
         # 3) 참석자 셀
         participants = data.get("participants") or []

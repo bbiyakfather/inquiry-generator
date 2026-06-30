@@ -1043,13 +1043,16 @@ class Api:
             tpl = cs.get_minutes_tpl(self.cfg) or None
             # 커스텀 양식이면 AI 분석 cell_map 적용 (없으면 표준 좌표)
             cell_map = None
+            custom_slots = None
             if tpl:
                 from src.ai.minutes_template_mapper import load_minutes_fieldmap
                 fm = load_minutes_fieldmap(tpl)
                 if fm and not fm.get("is_standard"):
                     cell_map = fm.get("cell_map") or None
+                # 커스텀 정적 슬롯(9-a ii)은 표준/커스텀 무관하게 적용
+                custom_slots = fm.get("custom_slots") or None if fm else None
             res = build_minutes(data, template_hwpx=tpl, out_path=out_path or None,
-                                cell_map=cell_map)
+                                cell_map=cell_map, custom_slots=custom_slots)
             if not res.get("ok"):
                 return _err(res.get("error", "HWPX 생성 실패"))
 
@@ -1208,6 +1211,7 @@ class Api:
                 "unmapped": map_r.get("unmapped", []),
                 "slot_labels": MINUTES_SLOTS,
                 "is_standard": is_standard_map(map_r.get("cell_map", {})),
+                "grid": grid,  # 병합셀(colspan/rowspan) 포함 — UI 격자 재구성용
             }
             if not map_r.get("ok"):
                 result["ai_error"] = map_r.get("error", "")
@@ -1216,6 +1220,69 @@ class Api:
             if map_r.get("ok") or not load_minutes_fieldmap(hwpx_path):
                 result["fieldmap_path"] = save_minutes_fieldmap(hwpx_path, map_r)
             return result
+        except Exception as e:
+            return _err(e, traceback=traceback.format_exc())
+
+    def scan_minutes_grid(self, template_path: str) -> dict:
+        """양식 표 격자만 추출(AI 호출 없음) — 오프라인 전용 시각 격자 경로.
+
+        AI 매핑(scan_minutes_template)과 분리해, AI 키 부재·지연·실패와 무관하게
+        병합셀(colspan/rowspan) 포함 격자를 항상 반환(적대리뷰 #6).
+        반환: {ok, row_cnt, col_cnt, cells:[{row,col,text,colspan,rowspan}], error?}
+        """
+        try:
+            from src.scan.hwpx_scan import scan_hwpx_grid
+            if not os.path.isfile(template_path):
+                return _err(f"파일을 찾을 수 없습니다: {template_path}")
+            return scan_hwpx_grid(template_path)
+        except Exception as e:
+            return _err(e, traceback=traceback.format_exc())
+
+    def save_minutes_cellmap(self, template_path: str, cell_map: dict = None,
+                             custom_slots=None, annotations=None) -> dict:
+        """사용자 편집본(cell_map + custom_slots + annotations)을 fieldmap v2로 저장.
+
+        반환: {ok, path, cell_map, custom_slots, annotations, unmapped,
+               is_standard, warnings}
+        """
+        try:
+            from src.ai.minutes_template_mapper import (
+                save_minutes_cellmap as _save)
+            if not os.path.isfile(template_path):
+                return _err(f"파일을 찾을 수 없습니다: {template_path}")
+            res = _save(template_path, cell_map or {}, custom_slots, annotations)
+            res["ok"] = True
+            return res
+        except Exception as e:
+            return _err(e, traceback=traceback.format_exc())
+
+    def load_minutes_cellmap(self, template_path: str) -> dict:
+        """디스크에 저장된 fieldmap을 편집기 초기값으로 로드(저장본 우선 복원).
+
+        save_minutes_cellmap의 역연산 — 앱 재시작 후 매핑 편집기를 다시 열 때
+        AI 재제안이 아니라 사용자가 저장한 cell_map이 그대로 복원되게 한다.
+        저장본이 없으면 has_fieldmap=False + 빈 격자.
+
+        반환: {ok, has_fieldmap, cell_map, custom_slots, annotations,
+               unmapped, is_standard, version}
+        """
+        try:
+            from src.ai.minutes_template_mapper import load_minutes_fieldmap
+            fm = load_minutes_fieldmap(template_path) if template_path else {}
+            if not fm:
+                return {"ok": True, "has_fieldmap": False, "cell_map": {},
+                        "custom_slots": [], "annotations": [], "unmapped": [],
+                        "is_standard": False, "version": 0}
+            return {
+                "ok": True,
+                "has_fieldmap": True,
+                "cell_map": fm.get("cell_map") or {},
+                "custom_slots": fm.get("custom_slots") or [],
+                "annotations": fm.get("annotations") or [],
+                "unmapped": fm.get("unmapped") or [],
+                "is_standard": bool(fm.get("is_standard", False)),
+                "version": fm.get("version", 1),
+            }
         except Exception as e:
             return _err(e, traceback=traceback.format_exc())
 

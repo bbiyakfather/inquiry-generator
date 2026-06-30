@@ -130,6 +130,12 @@ def _normalize_minutes(data: dict) -> dict:
         text = str(sec.get("text") or "").strip()
         out["sections"].append({"type": ptype, "text": text})
 
+    # 9-a (ii): 정적 텍스트 커스텀 슬롯 값. 정규화에서 폐기되지 않게 화이트리스트 보존.
+    # 있을 때만 키 추가(부재 시 기존 출력 불변).
+    cf = data.get("custom_fields")
+    if isinstance(cf, dict):
+        out["custom_fields"] = {str(k): str(v) for k, v in cf.items()}
+
     return out
 
 

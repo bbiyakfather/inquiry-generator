@@ -139,3 +139,118 @@ def save_minutes_fieldmap(template_path: str, map_result: dict) -> str:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
     return path
+
+
+# ── fieldmap v2: 사용자 편집본 저장 (cell_map + custom_slots + annotations) ────
+
+def _norm_cell_map(cell_map: dict) -> dict:
+    """cell_map(JSON 유래)에서 표준 7슬롯·[정수,정수]만 수용해 정규화."""
+    out = {}
+    for slot, rc in (cell_map or {}).items():
+        if slot not in MINUTES_SLOTS:
+            continue
+        try:
+            out[slot] = [int(rc[0]), int(rc[1])]
+        except (TypeError, ValueError, IndexError):
+            continue
+    return out
+
+
+def _validate_custom_slots(custom_slots) -> tuple:
+    """custom_slots [{id, label, cell:[r,c]}] 검증. (정규화 리스트, 경고) 반환.
+
+    잘못된 항목(누락 id·라벨 비문자열·정수쌍 아님)은 무시하고 경고에 담는다.
+    id 중복도 거부(첫 항목만 유지) — 생성 시 custom_fields[id] 충돌 방지.
+    """
+    out, warnings, seen_ids = [], [], set()
+    for s in (custom_slots or []):
+        if not isinstance(s, dict):
+            warnings.append("custom_slot 항목이 객체가 아님 — 무시")
+            continue
+        sid = s.get("id")
+        label = s.get("label")
+        cell = s.get("cell")
+        if not isinstance(sid, str) or not sid.strip():
+            warnings.append("custom_slot id 누락/비문자열 — 무시")
+            continue
+        if not isinstance(label, str):
+            warnings.append(f"custom_slot '{sid}' 라벨 타입 오류 — 무시")
+            continue
+        try:
+            r, c = int(cell[0]), int(cell[1])
+        except (TypeError, ValueError, IndexError, KeyError):
+            warnings.append(f"custom_slot '{sid}' 셀 좌표 오류 — 무시")
+            continue
+        if sid in seen_ids:
+            warnings.append(f"custom_slot id '{sid}' 중복 — 무시")
+            continue
+        seen_ids.add(sid)
+        out.append({"id": sid, "label": label, "cell": [r, c]})
+    return out, warnings
+
+
+def _validate_annotations(annotations) -> tuple:
+    """annotations [{row, col, label, comment, slot?}] 검증. (정규화 리스트, 경고).
+
+    9-e 1셀=1핀: 동일 (row,col)에 두 번째 핀은 거부(첫 핀만 유지).
+    정수 좌표·라벨 문자열 검증. 잘못된 항목은 무시·경고.
+    """
+    out, warnings, seen = [], [], set()
+    for a in (annotations or []):
+        if not isinstance(a, dict):
+            warnings.append("annotation 항목이 객체가 아님 — 무시")
+            continue
+        try:
+            r, c = int(a["row"]), int(a["col"])
+        except (TypeError, ValueError, KeyError):
+            warnings.append("annotation 좌표 오류 — 무시")
+            continue
+        label = a.get("label", "")
+        if not isinstance(label, str):
+            warnings.append(f"annotation ({r},{c}) 라벨 타입 오류 — 무시")
+            continue
+        if (r, c) in seen:
+            warnings.append(f"annotation ({r},{c}) 중복 핀 거부 (1셀=1핀)")
+            continue
+        seen.add((r, c))
+        item = {"row": r, "col": c, "label": label,
+                "comment": str(a.get("comment", "") or "")}
+        slot = a.get("slot")
+        if isinstance(slot, str) and slot.strip():
+            item["slot"] = slot
+        out.append(item)
+    return out, warnings
+
+
+def save_minutes_cellmap(template_path: str, cell_map: dict,
+                         custom_slots=None, annotations=None) -> dict:
+    """사용자 편집본을 .minutes.fieldmap.json version 2로 저장.
+
+    구조: {version:2, template, is_standard, cell_map, unmapped,
+           custom_slots, annotations}
+    is_standard 는 cell_map 으로 재계산. 잘못된 custom_slots/annotations 항목은
+    무시하고 warnings 로 보고(저장은 진행).
+
+    반환: 저장한 fieldmap dict + {"path", "warnings"}.
+    """
+    cells = _norm_cell_map(cell_map)
+    slots, slot_warn = _validate_custom_slots(custom_slots)
+    anns, ann_warn = _validate_annotations(annotations)
+
+    data = {
+        "version": 2,
+        "template": os.path.basename(template_path),
+        "is_standard": is_standard_map(cells),
+        "cell_map": cells,
+        "unmapped": [s for s in MINUTES_SLOTS if s not in cells],
+        "custom_slots": slots,
+        "annotations": anns,
+    }
+    path = _fieldmap_path(template_path)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+    result = dict(data)
+    result["path"] = path
+    result["warnings"] = slot_warn + ann_warn
+    return result

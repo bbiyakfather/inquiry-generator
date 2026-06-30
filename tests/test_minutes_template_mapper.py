@@ -1,0 +1,104 @@
+# -*- coding: utf-8 -*-
+"""T-A2-1 / T-A3-1: fieldmap v2 저장(save_minutes_cellmap) + 스키마 검증.
+
+COM·AI·네트워크 불필요 — 기본 pytest로 실행.
+"""
+import os
+
+import pytest
+
+from src.ai.minutes_template_mapper import (
+    save_minutes_cellmap, save_minutes_fieldmap, load_minutes_fieldmap,
+)
+from src.minutes.hwpx_minutes import DEFAULT_CELLS
+
+
+@pytest.fixture()
+def tpl(tmp_path):
+    # 실제 hwpx 불필요 — 저장 경로 계산만 사용(파일 존재 가정 안 함)
+    return str(tmp_path / "커스텀양식.hwpx")
+
+
+# ── T-A2-1: 저장 + 라운드트립 ────────────────────────────────────────────────
+
+def test_save_cellmap_roundtrip(tpl):
+    cell_map = {"business_name": [2, 2], "meeting_topic": [3, 1]}
+    custom = [{"id": "cs1", "label": "부서", "cell": [1, 2]}]
+    anns = [{"row": 4, "col": 1, "label": "검토", "comment": "확인필요", "slot": "content"}]
+    res = save_minutes_cellmap(tpl, cell_map, custom, anns)
+    assert res["version"] == 2
+    fm = load_minutes_fieldmap(tpl)
+    assert fm["version"] == 2
+    assert fm["cell_map"] == {"business_name": [2, 2], "meeting_topic": [3, 1]}
+    assert fm["custom_slots"] == custom
+    assert fm["annotations"] == anns
+
+
+def test_save_cellmap_is_standard_recalc(tpl):
+    standard = {k: list(v) for k, v in DEFAULT_CELLS.items()}
+    res = save_minutes_cellmap(tpl, standard)
+    assert res["is_standard"] is True
+    res2 = save_minutes_cellmap(tpl, {"business_name": [9, 9]})
+    assert res2["is_standard"] is False
+
+
+def test_save_cellmap_drops_unknown_slot(tpl):
+    res = save_minutes_cellmap(tpl, {"bogus_slot": [1, 1], "content": [6, 1]})
+    assert "bogus_slot" not in res["cell_map"]
+    assert res["cell_map"]["content"] == [6, 1]
+    assert "content" not in res["unmapped"]
+    assert "business_name" in res["unmapped"]
+
+
+# ── 후방호환: v1 → load → v2 저장 ─────────────────────────────────────────────
+
+def test_load_v1_without_custom_slots(tpl):
+    save_minutes_fieldmap(tpl, {"cell_map": {"business_name": [1, 1]},
+                                "unmapped": ["content"]})
+    fm = load_minutes_fieldmap(tpl)
+    assert fm.get("version") == 1
+    assert "custom_slots" not in fm        # v1엔 없음 — 견고 로드
+    # v2로 다시 저장해도 기존 cell_map 보존
+    res = save_minutes_cellmap(tpl, fm["cell_map"])
+    assert res["cell_map"] == {"business_name": [1, 1]}
+    assert res["custom_slots"] == []
+    assert res["annotations"] == []
+
+
+# ── T-A3-1: 스키마 검증 ──────────────────────────────────────────────────────
+
+def test_annotations_one_pin_per_cell(tpl):
+    anns = [
+        {"row": 2, "col": 1, "label": "첫핀"},
+        {"row": 2, "col": 1, "label": "둘째핀(거부)"},
+        {"row": 3, "col": 1, "label": "다른셀"},
+    ]
+    res = save_minutes_cellmap(tpl, {}, None, anns)
+    coords = [(a["row"], a["col"]) for a in res["annotations"]]
+    assert coords == [(2, 1), (3, 1)]      # 중복 (2,1) 둘째는 거부
+    assert res["annotations"][0]["label"] == "첫핀"
+    assert any("1셀=1핀" in w for w in res["warnings"])
+
+
+def test_custom_slots_invalid_items_ignored(tpl):
+    custom = [
+        {"id": "ok1", "label": "정상", "cell": [1, 2]},
+        {"id": "", "label": "빈id", "cell": [2, 2]},          # 무시
+        {"id": "bad", "label": 123, "cell": [3, 3]},          # 라벨 타입
+        {"id": "badcell", "label": "셀오류", "cell": ["a"]},  # 좌표 오류
+        {"id": "ok1", "label": "중복id", "cell": [4, 4]},     # 중복 id
+    ]
+    res = save_minutes_cellmap(tpl, {}, custom, None)
+    assert [s["id"] for s in res["custom_slots"]] == ["ok1"]
+    assert res["custom_slots"][0]["cell"] == [1, 2]
+    assert len(res["warnings"]) >= 4
+
+
+def test_annotations_bad_coords_ignored(tpl):
+    anns = [
+        {"row": "x", "col": 1, "label": "좌표오류"},
+        {"row": 5, "col": 2, "label": 99},          # 라벨 타입
+        {"row": 6, "col": 1, "label": "정상"},
+    ]
+    res = save_minutes_cellmap(tpl, {}, None, anns)
+    assert [(a["row"], a["col"]) for a in res["annotations"]] == [(6, 1)]
