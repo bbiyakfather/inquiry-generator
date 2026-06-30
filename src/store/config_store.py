@@ -276,6 +276,158 @@ def migrate_doc_type_folders(cfg: dict) -> bool:
     return False
 
 
+# ---- 회의록 Preset 저장소 (Wave 2 B-1/B-2/B-3) ----
+#
+# 저장 위치: doc_types.minutes.presets[]  (보관 목록)
+# 활성 양식의 단일 출처는 기존 doc_types.minutes.template_path (후방호환).
+#   - 빈 문자열 = 내장 양식 사용 (get_minutes_template / generate_minutes 규약)
+#   - select_minutes_preset 한 곳에서만 presets ↔ template_path 동기화를 강제해
+#     "이중 진실 원천"(보관 목록 vs 활성)을 방지한다. 활성 여부는 template_path로 파생.
+
+BUILTIN_PRESET_ID = "builtin"
+
+
+def _builtin_minutes_preset() -> dict:
+    """내장 양식(TEMPLATE_MINUTES) preset — 항상 첫 항목·삭제/이름변경 불가."""
+    from src.minutes.hwpx_minutes import TEMPLATE_MINUTES
+    return {
+        "id": BUILTIN_PRESET_ID,
+        "name": "기본 회의록 양식",
+        "template_path": TEMPLATE_MINUTES,
+        "is_builtin": True,
+        "created": "",
+    }
+
+
+def migrate_minutes_presets(cfg: dict) -> bool:
+    """presets[] 시딩·정규화 (적대리뷰 #4: _merge가 리스트를 통째로 덮으므로 전용 처리).
+
+    (a) presets 부재/비배열 → 내장 preset 1개로 초기화,
+    (b) 내장 preset을 항상 canonical 값으로 첫 항목 보장(구 내장 항목은 교체),
+    (c) 타입 검증(비 dict·id 누락 항목 폐기).
+    변경 시 True (저장은 호출자 책임 — migrate_doc_type_folders 패턴)."""
+    m = cfg.setdefault("doc_types", {}).setdefault("minutes", {})
+    raw = m.get("presets")
+    user = []
+    if isinstance(raw, list):
+        for p in raw:
+            if not isinstance(p, dict):
+                continue
+            pid = p.get("id")
+            if not isinstance(pid, str) or not pid.strip():
+                continue
+            if p.get("is_builtin") or pid == BUILTIN_PRESET_ID:
+                continue  # 내장은 canonical로 재생성
+            user.append(p)
+    new_list = [_builtin_minutes_preset()] + user
+    if raw == new_list:
+        return False
+    m["presets"] = new_list
+    return True
+
+
+def _presets_dir() -> str:
+    """사용자 추가 양식 사본 보관 폴더 (9-c: 앱 데이터 폴더 복사)."""
+    d = data_path("minutes_templates")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def copy_minutes_template(src_path: str) -> str:
+    """양식 파일을 앱 데이터 폴더로 복사하고 사본 경로 반환.
+    원본 이동·삭제에 견고(9-c). 같은 이름 충돌 시 접미사로 회피."""
+    import shutil
+    dst_dir = _presets_dir()
+    stem, ext = os.path.splitext(os.path.basename(src_path))
+    dst = os.path.join(dst_dir, stem + ext)
+    n = 1
+    while os.path.exists(dst):
+        dst = os.path.join(dst_dir, f"{stem}({n}){ext}")
+        n += 1
+    shutil.copy2(src_path, dst)
+    return dst
+
+
+def get_minutes_presets(cfg: dict) -> list:
+    """presets[] 반환 (시딩·정규화 보장)."""
+    migrate_minutes_presets(cfg)
+    return cfg["doc_types"]["minutes"]["presets"]
+
+
+def _find_preset(cfg: dict, preset_id: str) -> dict:
+    for p in get_minutes_presets(cfg):
+        if p.get("id") == preset_id:
+            return p
+    raise ValueError(f"존재하지 않는 preset입니다: {preset_id}")
+
+
+def add_minutes_preset(cfg: dict, template_path: str, name: str = None) -> dict:
+    """사용자 양식을 presets[]에 등록. template_path는 (보통 복사된) 양식 경로."""
+    import uuid
+    presets = get_minutes_presets(cfg)
+    existing = {p.get("id") for p in presets}
+    pid = uuid.uuid4().hex[:12]
+    while pid in existing:
+        pid = uuid.uuid4().hex[:12]
+    preset = {
+        "id": pid,
+        "name": (name or "").strip()
+                or os.path.splitext(os.path.basename(template_path))[0],
+        "template_path": template_path,
+        "is_builtin": False,
+        "created": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    presets.append(preset)
+    save_config(cfg)
+    return preset
+
+
+def select_minutes_preset(cfg: dict, preset_id: str) -> dict:
+    """활성 preset 지정 — 동기화 단일 지점. template_path를 활성 출처로 반영.
+    내장 preset이면 template_path=''(빈 값 = 내장 사용, 후방호환)."""
+    target = _find_preset(cfg, preset_id)
+    m = cfg["doc_types"]["minutes"]
+    m["template_path"] = "" if target.get("is_builtin") else target.get("template_path", "")
+    save_config(cfg)
+    return target
+
+
+def delete_minutes_preset(cfg: dict, preset_id: str) -> dict:
+    """preset 등록 해제. 내장 거부. 활성 preset였으면 template_path 내장 폴백."""
+    target = _find_preset(cfg, preset_id)
+    if target.get("is_builtin"):
+        raise ValueError("내장 양식은 삭제할 수 없습니다.")
+    m = cfg["doc_types"]["minutes"]
+    m["presets"].remove(target)
+    if m.get("template_path") and m.get("template_path") == target.get("template_path"):
+        m["template_path"] = ""  # 활성 삭제 → 내장 폴백
+    save_config(cfg)
+    return target
+
+
+def rename_minutes_preset(cfg: dict, preset_id: str, name: str) -> dict:
+    """preset 이름 변경. 내장 거부."""
+    target = _find_preset(cfg, preset_id)
+    if target.get("is_builtin"):
+        raise ValueError("내장 양식은 이름을 바꿀 수 없습니다.")
+    new = str(name or "").strip()
+    if new:
+        target["name"] = new
+    save_config(cfg)
+    return target
+
+
+def get_minutes_gallery_autoshow(cfg: dict) -> bool:
+    """양식 갤러리 자동 표시 여부 (기본 true, 9-d — tutorial.seen 패턴 미러)."""
+    v = (cfg.get("doc_types") or {}).get("minutes", {}).get("gallery_autoshow", True)
+    return bool(v) if isinstance(v, bool) else True
+
+
+def set_minutes_gallery_autoshow(cfg: dict, on: bool) -> None:
+    cfg.setdefault("doc_types", {}).setdefault("minutes", {})["gallery_autoshow"] = bool(on)
+    save_config(cfg)
+
+
 def next_quote_no(cfg: dict, year: str, peek: bool = False) -> str:
     """'제 2026-001호' 형식 자동 번호. peek=False면 시퀀스 증가 후 저장."""
     seqs = cfg.setdefault("quote_no_seq", {})

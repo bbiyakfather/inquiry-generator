@@ -148,6 +148,12 @@ class Api:
                 cs.save_config(self.cfg)
         except Exception:
             pass
+        # 회의록 preset 시딩·정규화 (적대리뷰 #4: _merge 비의존 전용 마이그레이션)
+        try:
+            if cs.migrate_minutes_presets(self.cfg):
+                cs.save_config(self.cfg)
+        except Exception:
+            pass
 
     def _migrate_model(self):
         """구형/종료 모델이 저장돼 있으면 최신 별칭으로 교체 (AI 호출 404 예방).
@@ -1309,6 +1315,100 @@ class Api:
                 return _err("파일을 찾을 수 없습니다")
             cs.set_minutes_tpl(self.cfg, path)
             return {"ok": True, "path": path}
+        except Exception as e:
+            return _err(e)
+
+    # ================= 회의록 양식 Preset (B-1/B-2/B-3) =================
+
+    def list_minutes_presets(self) -> dict:
+        """보관 중인 양식 preset 목록 + 활성 표시 + 매핑 상태 배지(갤러리용).
+
+        활성 여부는 template_path(단일 활성 출처)에서 파생. fieldmap_path는 파생값.
+        """
+        try:
+            from src.ai.minutes_template_mapper import (_fieldmap_path,
+                                                        load_minutes_fieldmap)
+            presets = cs.get_minutes_presets(self.cfg)
+            active_tpl = cs.get_minutes_tpl(self.cfg)
+            out = []
+            for p in presets:
+                tpl = p.get("template_path", "")
+                if p.get("is_builtin"):
+                    active = not active_tpl
+                else:
+                    active = bool(active_tpl) and active_tpl == tpl
+                exists = bool(tpl) and os.path.isfile(tpl)
+                fm = load_minutes_fieldmap(tpl) if exists else {}
+                out.append({
+                    **p,
+                    "active": active,
+                    "exists": exists,
+                    "fieldmap_path": _fieldmap_path(tpl) if tpl else "",
+                    "has_fieldmap": bool(fm),
+                    "is_standard": fm.get("is_standard", p.get("is_builtin", False))
+                                   if fm else p.get("is_builtin", False),
+                    "mapped": len(fm.get("cell_map") or {}) if fm else 0,
+                    "unmapped": fm.get("unmapped", []) if fm else [],
+                })
+            return {"ok": True, "presets": out,
+                    "gallery_autoshow": cs.get_minutes_gallery_autoshow(self.cfg)}
+        except Exception as e:
+            return _err(e, traceback=traceback.format_exc())
+
+    def add_minutes_preset(self, path: str, name: str = None) -> dict:
+        """양식 파일을 앱 폴더로 복사(9-c)하고 preset 등록."""
+        try:
+            path = (path or "").strip()
+            if not path or not os.path.isfile(path):
+                return _err("파일을 찾을 수 없습니다")
+            stored = cs.copy_minutes_template(path)
+            preset = cs.add_minutes_preset(self.cfg, stored, name)
+            return {"ok": True, "preset": preset}
+        except Exception as e:
+            return _err(e, traceback=traceback.format_exc())
+
+    def select_minutes_preset(self, preset_id: str) -> dict:
+        """활성 preset 지정 — template_path 동기화(단일 출처)."""
+        try:
+            preset = cs.select_minutes_preset(self.cfg, preset_id)
+            return {"ok": True, "preset": preset,
+                    "template_path": cs.get_minutes_tpl(self.cfg)}
+        except Exception as e:
+            return _err(e)
+
+    def delete_minutes_preset(self, preset_id: str, also_files: bool = False) -> dict:
+        """preset 등록 해제(내장 거부). also_files=True면 사본 파일·fieldmap까지 삭제
+        (delete_minutes의 별도 동의 패턴 미러). 활성 삭제 시 template_path 내장 폴백."""
+        try:
+            target = next((p for p in cs.get_minutes_presets(self.cfg)
+                           if p.get("id") == preset_id), None)
+            removed = cs.delete_minutes_preset(self.cfg, preset_id)  # 내장·미존재 거부
+            if also_files and target and not target.get("is_builtin"):
+                from src.ai.minutes_template_mapper import _fieldmap_path
+                tpl = target.get("template_path", "")
+                for f in (tpl, _fieldmap_path(tpl) if tpl else ""):
+                    if f and os.path.exists(f):
+                        try:
+                            os.remove(f)
+                        except OSError:
+                            pass
+            return {"ok": True, "removed": removed}
+        except Exception as e:
+            return _err(e)
+
+    def rename_minutes_preset(self, preset_id: str, name: str) -> dict:
+        """preset 이름 변경(내장 거부)."""
+        try:
+            preset = cs.rename_minutes_preset(self.cfg, preset_id, name)
+            return {"ok": True, "preset": preset}
+        except Exception as e:
+            return _err(e)
+
+    def set_minutes_gallery_autoshow(self, on: bool) -> dict:
+        """갤러리 자동 표시 토글 저장(9-d)."""
+        try:
+            cs.set_minutes_gallery_autoshow(self.cfg, bool(on))
+            return {"ok": True, "gallery_autoshow": bool(on)}
         except Exception as e:
             return _err(e)
 
