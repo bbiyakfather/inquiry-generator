@@ -218,6 +218,14 @@ def _validate_annotations(annotations) -> tuple:
         slot = a.get("slot")
         if isinstance(slot, str) and slot.strip():
             item["slot"] = slot
+        # 핀 픽셀 위치(자유 위치) 보존 — 재오픈 시 같은 자리에 복원 (이미지-핀 UI).
+        # 값이 없거나 범위 밖이면 생략(좌표만 있는 기존 핀과 후방호환).
+        try:
+            nx, ny = float(a["nx"]), float(a["ny"])
+            if 0.0 <= nx <= 1.0 and 0.0 <= ny <= 1.0:
+                item["nx"], item["ny"] = nx, ny
+        except (TypeError, ValueError, KeyError):
+            pass
         out.append(item)
     return out, warnings
 

@@ -172,3 +172,79 @@ def test_grid_no_nested_table_leak():
     coords = {(c["row"], c["col"]) for c in g["cells"]}
     assert (0, 1) not in coords, "중첩표 셀이 grid로 누수됨"
     assert len(g["cells"]) == 14
+
+
+# ── 이미지-핀 기하: 실측 양식으로 colW/rowH/bbox/hit-test 정답 검증 ──────────────
+
+def _cell(cells, r, c):
+    return next(x for x in cells if x["row"] == r and x["col"] == c)
+
+
+def test_geometry_colw_rowh_table_size():
+    """실측 정답: colW=[6220,33293,8389], rowH=[2925,1801×4,5462,53965]."""
+    g = hx.scan_hwpx_grid(TEMPLATE_MINUTES)
+    assert g["col_w"] == [6220, 33293, 8389]
+    assert g["row_h"] == [2925, 1801, 1801, 1801, 1801, 5462, 53965]
+    assert g["table_w"] == 47902
+    assert g["table_h"] == 69556
+
+
+def test_geometry_cell_bboxes():
+    """사업명(1,1)·참석자(5,1)·총인원(5,2)·회의내용(6,1) bbox 일치."""
+    cells = hx.scan_hwpx_grid(TEMPLATE_MINUTES)["cells"]
+    expect = {
+        (1, 1): (6220, 2925, 41682, 1801),
+        (5, 1): (6220, 10129, 33293, 5462),
+        (5, 2): (39513, 10129, 8389, 5462),
+        (6, 1): (6220, 15591, 41682, 53965),
+    }
+    for (r, c), (x, y, w, h) in expect.items():
+        cell = _cell(cells, r, c)
+        assert (cell["x"], cell["y"], cell["w"], cell["h"]) == (x, y, w, h), \
+            f"({r},{c}) bbox 불일치: {(cell['x'], cell['y'], cell['w'], cell['h'])}"
+
+
+def test_geometry_normalized_consistent():
+    """정규화 nx,ny,nw,nh가 절대 bbox/table 크기와 일치(렌더 비율 정확성)."""
+    g = hx.scan_hwpx_grid(TEMPLATE_MINUTES)
+    tw, th = g["table_w"], g["table_h"]
+    for cell in g["cells"]:
+        assert abs(cell["nx"] - cell["x"] / tw) < 1e-9
+        assert abs(cell["ny"] - cell["y"] / th) < 1e-9
+        assert abs(cell["nw"] - cell["w"] / tw) < 1e-9
+        assert abs(cell["nh"] - cell["h"] / th) < 1e-9
+
+
+def test_hit_test_pin_to_cell():
+    """핀→셀 역추적: (0.48,0.18)→(5,1), (0.91,0.18)→(5,2),
+       (0.56,0.61)→(6,1), (0.5,0.05)→(1,1)."""
+    cells = hx.scan_hwpx_grid(TEMPLATE_MINUTES)["cells"]
+    assert hx.hit_test_cell(cells, 0.48, 0.18) == (5, 1)
+    assert hx.hit_test_cell(cells, 0.91, 0.18) == (5, 2)
+    assert hx.hit_test_cell(cells, 0.56, 0.61) == (6, 1)
+    assert hx.hit_test_cell(cells, 0.5, 0.05) == (1, 1)
+
+
+def test_hit_test_edges_and_outside():
+    """엣지(우/하단)·코너는 마지막 포함셀로 귀속, 음수는 None."""
+    cells = hx.scan_hwpx_grid(TEMPLATE_MINUTES)["cells"]
+    assert hx.hit_test_cell(cells, 1.0, 1.0) == (6, 1)   # 우하단 코너
+    assert hx.hit_test_cell(cells, 0.0, 0.0) == (0, 0)   # 좌상단
+    assert hx.hit_test_cell(cells, -0.1, 0.5) is None
+
+
+def test_geometry_cellsz_fallback():
+    """cellSz 누락(병합만 덮인 칸) 폴백: 제약 전파로 정확 복원.
+
+    가운데 컬럼(col1)을 colSpan==1 셀에서 학습 못 하게 width를 지워도,
+    전폭(colSpan=3) 셀과 양옆 컬럼으로부터 33293을 역산해야 한다.
+    """
+    cells = [
+        {"row": 0, "col": 0, "colspan": 3, "rowspan": 1, "width": 47902, "height": 2925},
+        {"row": 1, "col": 0, "colspan": 1, "rowspan": 1, "width": 6220, "height": 5462},
+        {"row": 1, "col": 1, "colspan": 1, "rowspan": 1, "width": None, "height": 5462},
+        {"row": 1, "col": 2, "colspan": 1, "rowspan": 1, "width": 8389, "height": 5462},
+    ]
+    geo = hx.compute_table_geometry(cells)
+    assert geo["col_w"] == [6220, 33293, 8389]
+    assert geo["table_w"] == 47902

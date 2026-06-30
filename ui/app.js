@@ -2064,216 +2064,260 @@ async function confirmPresetDelete() {
   await loadPresetsAndRender();
 }
 
-/* ── 매핑 편집기 ── */
-const mnEditor = { templatePath: '', name: '', grid: [], cellMap: {},
-                   customSlots: [], annotations: [], pinSlot: null, pinCell: null,
-                   cache: {} };   // cache: 세션 내 저장본 복원(템플릿 경로별)
+/* ── 매핑 편집기 (이미지-핀 방식) ──
+   양식을 실제 비율 이미지로 렌더 → 아무 위치나 클릭해 핀 → 핀 위치를 포함하는
+   HWPX 셀(row,col)을 JS point-in-rect로 역추적(기하는 Python 산출) → 슬롯/커스텀 지정.
+   annotations[{row,col,label,comment,slot,nx,ny}] 단일 모델, 1셀=1핀. */
+const MN_CANVAS_W = 470;                  // 양식 이미지 폭(px) — 높이는 표 비율로 산출
+const mnEditor = { templatePath: '', name: '', grid: [], tableW: 0, tableH: 0,
+                   annotations: [], activePin: null, cache: {} };
+
+function mnFindAnn(r, c) {
+  return mnEditor.annotations.find(a => a.row === r && a.col === c);
+}
+function mnPinPos(a) {   // 핀 정규화 위치 — 없으면 셀 중심으로 폴백(구버전/AI 핀)
+  if (typeof a.nx === 'number' && typeof a.ny === 'number') return [a.nx, a.ny];
+  const c = mnEditor.grid.find(g => g.row === a.row && g.col === a.col);
+  return c ? [c.nx + c.nw / 2, c.ny + c.nh / 2] : [0, 0];
+}
+function mnDeriveCellMap() {   // 표준 슬롯이 지정된 핀 → cell_map (생성 엔진 입력)
+  const m = {};
+  mnEditor.annotations.forEach(a => {
+    if (a.slot && MN_SLOT_LABELS[a.slot]) m[a.slot] = [a.row, a.col];
+  });
+  return m;
+}
 
 async function openMinutesMapEditor(templatePath, name) {
   if (!templatePath) { toast('편집할 양식 파일이 없습니다', 'warn'); return; }
   overlay(true, '양식 표 구조 분석 중...');
-  let gridCells = null, cellMap = {}, customSlots = [], annotations = [];
+  let gridResult = null, annotations = null;   // annotations=null → AI/오프라인 경로
   const cached = mnEditor.cache[templatePath];
-  // 저장된 매핑 우선: 세션 캐시 → 디스크 저장본(load_minutes_cellmap) → AI 제안
   let saved = null;
   if (!cached) {
     const sv = await call('load_minutes_cellmap', templatePath);
     if (sv && sv.ok && sv.has_fieldmap) saved = sv;
   }
   if (cached) {
-    cellMap = clone(cached.cellMap); customSlots = clone(cached.customSlots);
     annotations = clone(cached.annotations);
   } else if (saved) {
-    // 디스크 저장본 복원 — 사용자가 저장한 cell_map을 그대로 초기 표시
-    cellMap = normCellMap(saved.cell_map);
-    customSlots = saved.custom_slots || [];
     annotations = saved.annotations || [];
+    // 저장본에 annotations가 없고 cell_map만 있으면(구버전) cell_map을 핀으로 승격
+    if (!annotations.length && saved.cell_map)
+      annotations = mnCellMapToAnns(normCellMap(saved.cell_map));
   } else if (aiKeySet()) {
-    // AI 키 있을 때: grid + cell_map 초기 제안 동시 (scan_minutes_template)
     const r = await call('scan_minutes_template', templatePath);
     if (r.ok) {
-      gridCells = (r.grid && r.grid.cells) || null;
-      cellMap = normCellMap(r.cell_map);
-      if (r.ai_error) toast(`AI 매핑 일부 실패 — 수동 매핑으로 완성하세요 (${r.ai_error})`, 'warn', 5000);
+      gridResult = r.grid || null;
+      annotations = mnCellMapToAnns(normCellMap(r.cell_map));   // AI 제안을 초기 핀으로
+      if (r.ai_error) toast(`AI 매핑 일부 실패 — 핀으로 직접 완성하세요 (${r.ai_error})`, 'warn', 5000);
     }
   }
-  if (!gridCells) {
-    // 오프라인 폴백: AI 없이 격자만 (scan_minutes_grid) — 수동 매핑
+  if (!gridResult) {   // 오프라인/저장본 경로: 격자만 별도 로드 (geometry 포함)
     const g = await call('scan_minutes_grid', templatePath);
     if (!g.ok) { overlay(false); toast(g.error || '표 구조 분석 실패', 'err', 5000); return; }
-    gridCells = g.cells || [];
+    gridResult = g;
   }
   overlay(false);
+
   mnEditor.templatePath = templatePath;
   mnEditor.name = name || '';
-  mnEditor.grid = (gridCells || []).map(c => ({
+  mnEditor.tableW = gridResult.table_w || 0;
+  mnEditor.tableH = gridResult.table_h || 0;
+  mnEditor.grid = (gridResult.cells || []).map(c => ({
     row: c.row, col: c.col, text: c.text || '',
     colspan: c.colspan || 1, rowspan: c.rowspan || 1,
+    nx: c.nx || 0, ny: c.ny || 0, nw: c.nw || 0, nh: c.nh || 0,
   }));
-  mnEditor.cellMap = cellMap; mnEditor.customSlots = customSlots;
-  mnEditor.annotations = annotations; mnEditor.pinSlot = null; mnEditor.pinCell = null;
+  // 핀 정규화 위치 보장(저장 시 nx,ny 유지되도록 미리 채움)
+  mnEditor.annotations = (annotations || []).map(a => {
+    const [nx, ny] = mnPinPos(a);
+    return { ...a, nx, ny };
+  });
+  mnEditor.activePin = null;
+
   $('#mn-map-name').textContent = name || '';
-  $('#mn-map-pin').classList.add('hidden');
+  $('#mn-pin-pop').classList.add('hidden');
   const warn = $('#mn-map-warn'); warn.className = 'ai-status'; warn.textContent = '';
-  renderMapGrid(); renderMapSlots(); renderMapCustom();
+  mnBuildSlotOptions();
+  renderMapCanvas(); renderSlotStatus();
   $('#mn-map-modal').classList.remove('hidden');
 }
 
-function renderMapGrid() {
-  const rows = {};
-  mnEditor.grid.forEach(c => { (rows[c.row] = rows[c.row] || []).push(c); });
-  const slotAt = {};   // "r,c" -> [표시 라벨]
-  Object.entries(mnEditor.cellMap).forEach(([slot, rc]) => {
-    const k = rc.join(','); (slotAt[k] = slotAt[k] || []).push(MN_SLOT_LABELS[slot] || slot);
+/* cell_map(slot→[r,c]) → 핀 배열(셀 중심에 표준 슬롯 핀) */
+function mnCellMapToAnns(cellMap) {
+  const out = [];
+  Object.entries(cellMap || {}).forEach(([slot, rc]) => {
+    if (!MN_SLOT_LABELS[slot]) return;
+    out.push({ row: rc[0], col: rc[1], slot, label: MN_SLOT_LABELS[slot], comment: '' });
   });
-  mnEditor.customSlots.forEach(s => {
-    const k = (s.cell || []).join(','); (slotAt[k] = slotAt[k] || []).push('★' + (s.label || '커스텀'));
-  });
-  const annAt = {};
-  mnEditor.annotations.forEach(a => { annAt[a.row + ',' + a.col] = a; });
-
-  let html = '<table class="mn-grid-table">';
-  Object.keys(rows).map(Number).sort((a, b) => a - b).forEach(rn => {
-    html += '<tr>';
-    rows[rn].sort((a, b) => a.col - b.col).forEach(c => {
-      const k = c.row + ',' + c.col;
-      const cs = c.colspan > 1 ? ` colspan="${c.colspan}"` : '';
-      const rs = c.rowspan > 1 ? ` rowspan="${c.rowspan}"` : '';
-      const badges = (slotAt[k] || []).map(l => `<span class="mn-cell-badge">${esc(l)}</span>`).join('');
-      const pin = annAt[k]
-        ? `<span class="mn-cell-pin" title="${esc(annAt[k].comment || '')}">📌 ${esc(annAt[k].label || '')}</span>` : '';
-      const txt = (c.text || '').slice(0, 40);
-      const body = txt ? esc(txt) : '<span class="mn-cell-empty">(빈 셀)</span>';
-      html += `<td class="mn-grid-cell${mnEditor.pinSlot ? ' assigning' : ''}" data-row="${c.row}" data-col="${c.col}"${cs}${rs}>
-        <div class="mn-cell-coord">(${c.row},${c.col})</div>
-        <div class="mn-cell-text">${body}</div>${badges}${pin}</td>`;
-    });
-    html += '</tr>';
-  });
-  html += '</table>';
-  $('#mn-map-grid').innerHTML = html;
-  $$('#mn-map-grid .mn-grid-cell').forEach(td =>
-    td.addEventListener('click', () => onMapCellClick(+td.dataset.row, +td.dataset.col)));
+  return out;
 }
 
-function onMapCellClick(r, c) {
-  if (mnEditor.pinSlot) {   // 슬롯 지정 모드: 이 셀을 슬롯에 매핑
-    mnEditor.cellMap[mnEditor.pinSlot] = [r, c];
-    mnEditor.pinSlot = null;
-    renderMapGrid(); renderMapSlots();
-    return;
+/* 양식을 실제 비율 이미지로 렌더 — 셀 박스 절대배치(%) + 핀 마커 */
+function renderMapCanvas() {
+  const canvas = $('#mn-map-canvas');
+  const ratio = mnEditor.tableW ? mnEditor.tableH / mnEditor.tableW : 1;
+  canvas.style.width = MN_CANVAS_W + 'px';
+  canvas.style.height = Math.round(MN_CANVAS_W * ratio) + 'px';
+
+  const mapped = {};   // "r,c" → 표시 라벨 (지정된 핀)
+  mnEditor.annotations.forEach(a => {
+    const lbl = a.slot ? MN_SLOT_LABELS[a.slot] : (a.label || '');
+    if (lbl) mapped[a.row + ',' + a.col] = lbl;
+  });
+
+  let boxes = '';
+  mnEditor.grid.forEach(c => {
+    const k = c.row + ',' + c.col;
+    const txt = (c.text || '').slice(0, 36);
+    const body = txt ? esc(txt) : '';
+    boxes += `<div class="mn-cell-box${mapped[k] ? ' mapped' : ''}" `
+      + `style="left:${c.nx * 100}%;top:${c.ny * 100}%;width:${c.nw * 100}%;height:${c.nh * 100}%">`
+      + `<span class="mn-cell-coord">${c.row},${c.col}</span>`
+      + `<span class="mn-cell-text">${body}</span></div>`;
+  });
+  let pins = '';
+  mnEditor.annotations.forEach(a => {
+    const [nx, ny] = mnPinPos(a);
+    const lbl = a.slot ? MN_SLOT_LABELS[a.slot] : (a.label || '핀');
+    const active = mnEditor.activePin && mnEditor.activePin[0] === a.row && mnEditor.activePin[1] === a.col;
+    pins += `<div class="mn-pin${a.slot ? ' std' : ''}${active ? ' active' : ''}" `
+      + `data-row="${a.row}" data-col="${a.col}" style="left:${nx * 100}%;top:${ny * 100}%" `
+      + `title="${esc(a.comment || '')}"><span class="mn-pin-dot">📌</span>`
+      + `<span class="mn-pin-label">${esc(lbl)}</span></div>`;
+  });
+
+  let layer = $('#mn-map-layer');
+  if (!layer) {
+    layer = el('div'); layer.id = 'mn-map-layer';
+    canvas.insertBefore(layer, canvas.firstChild);
   }
-  openPinEditor(r, c);
+  layer.innerHTML = boxes + pins;
 }
 
-function cellOptionsHTML() {
-  return mnEditor.grid.map(c =>
-    `<option value="${c.row},${c.col}">(${c.row},${c.col}) ${esc((c.text || '').slice(0, 18))}</option>`).join('');
+/* 캔버스 클릭 → 정규화 좌표 → 셀 역추적 → 핀 upsert → 팝오버 */
+function onCanvasClick(e) {
+  if (e.target.closest('#mn-pin-pop')) return;   // 팝오버 내부 클릭 무시
+  const canvas = $('#mn-map-canvas');
+  const rect = canvas.getBoundingClientRect();
+  const pinEl = e.target.closest('.mn-pin');
+  let r, c, nx, ny;
+  if (pinEl) {           // 기존 핀 클릭 → 위치 유지하고 편집
+    r = +pinEl.dataset.row; c = +pinEl.dataset.col;
+    const a = mnFindAnn(r, c); [nx, ny] = mnPinPos(a);
+  } else {
+    nx = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    ny = Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height));
+    const hit = mnHitTest(nx, ny);
+    if (!hit) { toast('표 영역 안을 클릭하세요', 'warn'); return; }
+    [r, c] = hit;
+    const a = mnFindAnn(r, c);
+    if (a) { a.nx = nx; a.ny = ny; }   // 1셀=1핀: 같은 셀 재클릭 → 위치 갱신
+    else mnEditor.annotations.push({ row: r, col: c, label: '', comment: '', nx, ny });
+  }
+  mnEditor.activePin = [r, c];
+  renderMapCanvas();
+  openPinPop(r, c, nx, ny);
 }
 
-function renderMapSlots() {
-  const opts = cellOptionsHTML();
-  $('#mn-map-slots').innerHTML = MN_SLOT_ORDER.map(slot => {
-    const assigning = mnEditor.pinSlot === slot;
-    return `<div class="mn-slot-row${assigning ? ' assigning' : ''}">
-      <span class="mn-slot-label">${esc(MN_SLOT_LABELS[slot])}</span>
-      <select class="mn-slot-sel" data-slot="${slot}"><option value="">(미지정)</option>${opts}</select>
-      <button class="btn btn-mini mn-slot-pick" data-slot="${slot}" type="button">${assigning ? '클릭…' : '셀 클릭'}</button>
-    </div>`;
+/* point-in-rect (정규화) — 기하 bbox는 Python이 산출, JS는 hit-test만 */
+function mnHitTest(nx, ny) {
+  for (const c of mnEditor.grid)
+    if (c.nx <= nx && nx < c.nx + c.nw && c.ny <= ny && ny < c.ny + c.nh) return [c.row, c.col];
+  for (const c of mnEditor.grid)   // 엣지 폴백(닫힘)
+    if (c.nx <= nx && nx <= c.nx + c.nw && c.ny <= ny && ny <= c.ny + c.nh) return [c.row, c.col];
+  return null;
+}
+
+function mnBuildSlotOptions() {
+  const opts = ['<option value="">(메모만)</option>']
+    .concat(MN_SLOT_ORDER.map(s => `<option value="${s}">${esc(MN_SLOT_LABELS[s])}</option>`))
+    .concat('<option value="__custom__">＋ 커스텀 라벨</option>');
+  $('#mn-pop-slot').innerHTML = opts.join('');
+}
+
+/* 핀 팝오버 — 슬롯/커스텀 라벨 지정 */
+function openPinPop(r, c, nx, ny) {
+  const a = mnFindAnn(r, c);
+  const pop = $('#mn-pin-pop');
+  $('#mn-pop-cell').textContent = `(${r}, ${c})`;
+  const sel = $('#mn-pop-slot');
+  sel.value = a && a.slot ? a.slot : (a && a.label ? '__custom__' : '');
+  $('#mn-pop-label').value = (a && !a.slot && a.label) ? a.label : '';
+  $('#mn-pop-comment').value = a ? (a.comment || '') : '';
+  mnTogglePopCustom();
+  // 팝오버를 핀 근처에 배치(캔버스 내 % 좌표, 우측 넘침 방지)
+  const px = (nx != null ? nx : (a ? mnPinPos(a)[0] : 0.5));
+  const py = (ny != null ? ny : (a ? mnPinPos(a)[1] : 0.5));
+  pop.style.left = Math.min(px * 100, 62) + '%';
+  pop.style.top = Math.min(py * 100, 78) + '%';
+  pop.classList.remove('hidden');
+  sel.focus();
+}
+function mnTogglePopCustom() {
+  $('#mn-pop-custom-wrap').classList.toggle('hidden', $('#mn-pop-slot').value !== '__custom__');
+}
+function hidePinPop() { $('#mn-pin-pop').classList.add('hidden'); mnEditor.activePin = null; }
+
+function savePinPop() {
+  if (!mnEditor.activePin) return;
+  const [r, c] = mnEditor.activePin;
+  const a = mnFindAnn(r, c);
+  if (!a) { hidePinPop(); return; }
+  const sel = $('#mn-pop-slot').value;
+  const comment = $('#mn-pop-comment').value.trim();
+  const customLabel = $('#mn-pop-label').value.trim();
+  a.comment = comment;
+  if (sel && sel !== '__custom__') {                 // 표준 슬롯 — 슬롯당 1셀 보장
+    mnEditor.annotations.forEach(x => { if (x !== a && x.slot === sel) delete x.slot; });
+    a.slot = sel; a.label = MN_SLOT_LABELS[sel];
+  } else if (sel === '__custom__') {                 // 커스텀 라벨
+    if (!customLabel) { toast('커스텀 라벨을 입력하세요', 'warn'); return; }
+    delete a.slot; a.label = customLabel;
+  } else {                                           // 메모만 — 라벨/슬롯 없음
+    delete a.slot; a.label = '';
+    if (!comment) { mnEditor.annotations = mnEditor.annotations.filter(x => x !== a); }
+  }
+  hidePinPop();
+  renderMapCanvas(); renderSlotStatus();
+}
+function delPinPop() {
+  if (!mnEditor.activePin) return;
+  const [r, c] = mnEditor.activePin;
+  mnEditor.annotations = mnEditor.annotations.filter(a => !(a.row === r && a.col === c));
+  hidePinPop();
+  renderMapCanvas(); renderSlotStatus();
+}
+
+/* 우측 요약 — 표준 7항목 매핑 현황 + 커스텀 핀 목록 */
+function renderSlotStatus() {
+  const m = mnDeriveCellMap();
+  let html = MN_SLOT_ORDER.map(s => {
+    const rc = m[s];
+    return `<div class="mn-status-row${rc ? ' on' : ''}">
+      <span class="mn-status-label">${esc(MN_SLOT_LABELS[s])}</span>
+      <span class="mn-status-val">${rc ? `(${rc[0]},${rc[1]})` : '미지정'}</span></div>`;
   }).join('');
-  $$('#mn-map-slots .mn-slot-sel').forEach(sel => {
-    const slot = sel.dataset.slot;
-    const rc = mnEditor.cellMap[slot];
-    sel.value = rc ? `${rc[0]},${rc[1]}` : '';
-    sel.addEventListener('change', () => {
-      if (sel.value) { const [r, c] = sel.value.split(',').map(Number); mnEditor.cellMap[slot] = [r, c]; }
-      else delete mnEditor.cellMap[slot];
-      mnEditor.pinSlot = null;
-      renderMapGrid(); renderMapSlots();
-    });
-  });
-  $$('#mn-map-slots .mn-slot-pick').forEach(b => b.addEventListener('click', () => {
-    mnEditor.pinSlot = (mnEditor.pinSlot === b.dataset.slot) ? null : b.dataset.slot;
-    renderMapSlots(); renderMapGrid();
-  }));
+  const customs = mnEditor.annotations.filter(a => !a.slot && a.label);
+  if (customs.length) {
+    html += '<div class="mn-status-sep">커스텀 라벨</div>'
+      + customs.map(a => `<div class="mn-status-row on">
+          <span class="mn-status-label">★ ${esc(a.label)}</span>
+          <span class="mn-status-val">(${a.row},${a.col})</span></div>`).join('');
+  }
+  $('#mn-map-status').innerHTML = html;
 }
 
-function renderMapCustom() {
-  const wrap = $('#mn-map-custom-list');
-  if (!mnEditor.customSlots.length) { wrap.innerHTML = '<p class="hint">추가한 커스텀 슬롯이 없습니다.</p>'; return; }
-  const opts = cellOptionsHTML();
-  wrap.innerHTML = mnEditor.customSlots.map((s, i) => `
-    <div class="mn-custom-row">
-      <input class="mn-cs-label" data-i="${i}" value="${esc(s.label || '')}" placeholder="라벨">
-      <select class="mn-cs-cell" data-i="${i}"><option value="">(셀)</option>${opts}</select>
-      <button class="btn btn-mini mn-cs-del" data-i="${i}" type="button">삭제</button>
-    </div>`).join('');
-  $$('#mn-map-custom-list .mn-cs-cell').forEach(sel => {
-    const i = +sel.dataset.i;
-    const cell = mnEditor.customSlots[i].cell;
-    sel.value = (Array.isArray(cell) && cell.length) ? cell.join(',') : '';
-    sel.addEventListener('change', () => {
-      if (sel.value) { const [r, c] = sel.value.split(',').map(Number); mnEditor.customSlots[i].cell = [r, c]; }
-      renderMapGrid();
-    });
-  });
-  $$('#mn-map-custom-list .mn-cs-label').forEach(inp =>
-    inp.addEventListener('input', () => { mnEditor.customSlots[+inp.dataset.i].label = inp.value; }));
-  $$('#mn-map-custom-list .mn-cs-del').forEach(b =>
-    b.addEventListener('click', () => { mnEditor.customSlots.splice(+b.dataset.i, 1); renderMapCustom(); renderMapGrid(); }));
-}
-
-function addCustomSlot() {
-  const first = mnEditor.grid[0];
-  if (!first) { toast('격자를 먼저 불러오세요', 'warn'); return; }
-  mnEditor.customSlots.push({ id: 'cs_' + Date.now().toString(36), label: '', cell: [first.row, first.col] });
-  renderMapCustom(); renderMapGrid();
-}
-
-/* 셀 핀(annotation) — 1셀=1핀 */
-function openPinEditor(r, c) {
-  mnEditor.pinCell = [r, c];
-  const a = mnEditor.annotations.find(x => x.row === r && x.col === c);
-  $('#mn-map-pin-cell').textContent = `(${r}, ${c})`;
-  $('#mn-map-pin-label').value = a ? (a.label || '') : '';
-  $('#mn-map-pin-comment').value = a ? (a.comment || '') : '';
-  $('#mn-map-pin').classList.remove('hidden');
-}
-function savePin() {
-  if (!mnEditor.pinCell) return;
-  const [r, c] = mnEditor.pinCell;
-  const label = $('#mn-map-pin-label').value.trim();
-  const comment = $('#mn-map-pin-comment').value.trim();
-  if (!label && !comment) { toast('라벨 또는 메모를 입력하세요', 'warn'); return; }
-  mnEditor.annotations = mnEditor.annotations.filter(a => !(a.row === r && a.col === c));
-  mnEditor.annotations.push({ row: r, col: c, label, comment });
-  $('#mn-map-pin').classList.add('hidden'); mnEditor.pinCell = null;
-  renderMapGrid();
-}
-function delPin() {
-  if (!mnEditor.pinCell) return;
-  const [r, c] = mnEditor.pinCell;
-  mnEditor.annotations = mnEditor.annotations.filter(a => !(a.row === r && a.col === c));
-  $('#mn-map-pin').classList.add('hidden'); mnEditor.pinCell = null;
-  renderMapGrid();
-}
-
-/* 저장 — 단일 경로 save_minutes_cellmap (cell_map + custom_slots + annotations) */
+/* 저장 — 단일 경로 save_minutes_cellmap (cell_map(핀에서 도출) + annotations) */
 async function saveMinutesMapping() {
   const tpl = mnEditor.templatePath;
   overlay(true, '매핑 저장 중...');
-  const r = await call('save_minutes_cellmap', tpl, mnEditor.cellMap,
-                       mnEditor.customSlots, mnEditor.annotations);
+  const r = await call('save_minutes_cellmap', tpl, mnDeriveCellMap(), [], mnEditor.annotations);
   overlay(false);
   if (!r.ok) { toast(r.error || '매핑 저장 실패', 'err', 5000); return; }
-  // 백엔드 정규화 결과로 상태 동기화 (범위밖·중복·1셀1핀 정리본)
-  mnEditor.cellMap = normCellMap(r.cell_map);
-  mnEditor.customSlots = r.custom_slots || [];
-  mnEditor.annotations = r.annotations || [];
-  mnEditor.cache[tpl] = {
-    cellMap: clone(mnEditor.cellMap), customSlots: clone(mnEditor.customSlots),
-    annotations: clone(mnEditor.annotations),
-  };
+  mnEditor.annotations = r.annotations || [];   // 백엔드 정규화본(1셀1핀·nx,ny 보존)
+  mnEditor.cache[tpl] = { annotations: clone(mnEditor.annotations) };
   const unmapped = (r.unmapped || []).map(s => MN_SLOT_LABELS[s] || s);
   const warns = r.warnings || [];
   const box = $('#mn-map-warn');
@@ -2283,7 +2327,7 @@ async function saveMinutesMapping() {
   box.className = 'ai-status show' + (unmapped.length || warns.length ? ' warn' : '');
   box.textContent = msg;
   toast('매핑이 저장됐습니다', 'ok');
-  renderMapGrid(); renderMapSlots(); renderMapCustom();
+  renderMapCanvas(); renderSlotStatus();
 }
 
 /* ===================================================================
@@ -2482,9 +2526,10 @@ async function init() {
   // 매핑 편집기 (T-F2)
   $('#mn-map-cancel').addEventListener('click', () => $('#mn-map-modal').classList.add('hidden'));
   $('#mn-map-save').addEventListener('click', saveMinutesMapping);
-  $('#mn-map-add-custom').addEventListener('click', addCustomSlot);
-  $('#mn-map-pin-save').addEventListener('click', savePin);
-  $('#mn-map-pin-del').addEventListener('click', delPin);
+  $('#mn-map-canvas').addEventListener('click', onCanvasClick);
+  $('#mn-pop-slot').addEventListener('change', mnTogglePopCustom);
+  $('#mn-pop-save').addEventListener('click', savePinPop);
+  $('#mn-pop-del').addEventListener('click', delPinPop);
   $('#mn-map-modal').addEventListener('click', e => { if (e.target.id === 'mn-map-modal') $('#mn-map-modal').classList.add('hidden'); });
   // 양식 삭제 확인 (T-F1)
   $('#mn-preset-del-cancel').addEventListener('click', closePresetDelete);

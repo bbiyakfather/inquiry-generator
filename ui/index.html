@@ -700,25 +700,27 @@
 <div id="mn-map-modal" class="modal-back hidden">
   <div class="modal card modal-xwide">
     <h3>매핑 편집 <span id="mn-map-name" class="h-sub"></span></h3>
-    <p class="hint">각 항목을 오른쪽 드롭다운에서 고르거나, <b>[셀 클릭]</b>을 누른 뒤 격자에서 셀을 클릭해 지정하세요.
-      셀을 그냥 클릭하면 핀·메모를 달 수 있습니다 (1셀=1핀). 병합셀은 양식 그대로 표시됩니다.</p>
+    <p class="hint">양식 그림 위 <b>아무 곳이나 클릭</b>해 핀을 찍으세요. 핀 위치의 셀이 자동 인식됩니다.
+      팝오버에서 표준 항목(사업명·일시·장소·주제·참석자·총인원·회의내용) 또는 커스텀 라벨을 지정하세요. (1셀=1핀)</p>
     <div class="mn-map-layout">
-      <div class="mn-map-gridwrap"><div id="mn-map-grid"></div></div>
-      <div class="mn-map-side">
-        <div class="mn-map-slots" id="mn-map-slots"></div>
-        <div class="mn-map-custom">
-          <h4>커스텀 슬롯 <button id="mn-map-add-custom" class="btn btn-mini" type="button">＋ 추가</button></h4>
-          <div id="mn-map-custom-list"></div>
-        </div>
-        <div class="mn-map-pin hidden" id="mn-map-pin">
-          <h4>셀 핀 <span id="mn-map-pin-cell" class="h-sub"></span></h4>
-          <label>라벨 <input id="mn-map-pin-label" placeholder="예: 작성자"></label>
-          <label>메모 <input id="mn-map-pin-comment" placeholder="메모 (선택)"></label>
-          <div class="inline-row">
-            <button id="mn-map-pin-save" class="btn btn-outline btn-mini" type="button">핀 저장</button>
-            <button id="mn-map-pin-del" class="btn btn-ghost btn-mini" type="button">핀 삭제</button>
+      <div class="mn-map-gridwrap">
+        <div id="mn-map-canvas" class="mn-map-canvas">
+          <div id="mn-pin-pop" class="mn-pin-pop hidden">
+            <div class="mn-pin-pop-hd">셀 <span id="mn-pop-cell" class="h-sub"></span></div>
+            <label>항목 <select id="mn-pop-slot"></select></label>
+            <label class="mn-pop-custom hidden" id="mn-pop-custom-wrap">커스텀 라벨
+              <input id="mn-pop-label" placeholder="예: 작성자"></label>
+            <label>메모 <input id="mn-pop-comment" placeholder="메모 (선택)"></label>
+            <div class="inline-row">
+              <button id="mn-pop-save" class="btn btn-primary btn-mini" type="button">지정</button>
+              <button id="mn-pop-del" class="btn btn-ghost btn-mini" type="button">핀 삭제</button>
+            </div>
           </div>
         </div>
+      </div>
+      <div class="mn-map-side">
+        <h4 class="mn-map-side-h">표준 항목 매핑</h4>
+        <div class="mn-map-status" id="mn-map-status"></div>
       </div>
     </div>
     <div id="mn-map-warn" class="ai-status"></div>

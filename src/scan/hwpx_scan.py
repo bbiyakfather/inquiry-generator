@@ -141,13 +141,115 @@ def parse_minutes_hwpx(path: str) -> MinutesMeta:
     return meta
 
 
-def scan_hwpx_grid(path: str) -> dict:
-    """회의록 HWPX 템플릿의 첫 번째 표 전체 셀을 그리드로 추출 (AI 분석 입력용).
+def _resolve_dims(dim, cells, addr_key, span_key, size_key):
+    """dim(컬럼 너비/행 높이) 리스트의 None 칸을 채운다 (cellSz 누락 폴백).
 
-    반환: {ok, row_cnt, col_cnt, cells: [{row, col, text, colspan, rowspan}], error?}
-    각 cell.text 는 라벨("사업명" 등) 또는 기존 샘플값. AI가 이 그리드를 보고
-    표준 슬롯을 어느 값 셀(row,col)에 채울지 판단한다.
-    colspan/rowspan(cellSpan)은 병합셀을 HTML 표로 재구성할 때 사용(A-6-3).
+    1차: 스팬 셀로 제약 전파 — 어떤 병합셀의 span 안에 미지의 칸이 정확히 1개면
+         그 칸 = 셀크기 − 알려진 칸 합 (실측 구조에서 정확).
+    2차: 그래도 남으면 전폭 셀(span==칸수) 기준 남은 크기를 균등 분배(엣지케이스).
+    None이 없으면 즉시 종료(정상 양식 경로 — 아무 일도 안 함).
+    """
+    if not any(d is None for d in dim):
+        return
+    changed = True
+    while changed and any(d is None for d in dim):
+        changed = False
+        for c in cells:
+            span, start, total = c[span_key], c[addr_key], c.get(size_key)
+            if span <= 1 or not total:
+                continue
+            idxs = range(start, start + span)
+            unknown = [i for i in idxs if dim[i] is None]
+            if len(unknown) == 1:
+                known = sum(dim[i] for i in idxs if dim[i] is not None)
+                dim[unknown[0]] = max(total - known, 0)
+                changed = True
+    if any(d is None for d in dim):  # ponytail: 균등분배 폴백, 구조 못 풀 때만
+        ref = next((c[size_key] for c in cells
+                    if c[span_key] == len(dim) and c.get(size_key)), None)
+        missing = [i for i, d in enumerate(dim) if d is None]
+        known = sum(d for d in dim if d is not None)
+        if ref:
+            leftover = max(ref - known, 0)
+        else:                          # 기준조차 없으면 알려진 칸 평균으로 추정
+            avg = known / (len(dim) - len(missing)) if len(dim) > len(missing) else 1
+            leftover = avg * len(missing)
+        share = leftover / len(missing)
+        for i in missing:
+            dim[i] = share
+
+
+def compute_table_geometry(cells: list) -> dict:
+    """cells(row,col,colspan,rowspan,width,height) → 각 셀에 기하 bbox를 주입.
+
+    검증된 알고리즘(templates/회의록_양식.hwpx 실측):
+      colW[c]=colSpan==1 셀의 cellSz.width, rowH[r]=rowSpan==1 셀의 height.
+      셀 bbox: x=ΣcolW[0..col-1], y=ΣrowH[0..row-1],
+               w=ΣcolW[col..+colSpan-1], h=ΣrowH[row..+rowSpan-1].
+      table_w=ΣcolW, table_h=ΣrowH. 정규화(nx,ny,nw,nh)=bbox/table 크기.
+    각 cell dict에 x,y,w,h(HWPUNIT)·nx,ny,nw,nh(0..1)를 in-place 추가.
+    반환: {col_w, row_h, table_w, table_h}. (width/height 누락 셀은 _resolve_dims 폴백)
+    """
+    if not cells:
+        return {"col_w": [], "row_h": [], "table_w": 0, "table_h": 0}
+    ncols = max(c["col"] + c["colspan"] for c in cells)
+    nrows = max(c["row"] + c["rowspan"] for c in cells)
+    col_w = [None] * ncols
+    row_h = [None] * nrows
+    for c in cells:
+        if c["colspan"] == 1 and c.get("width"):
+            col_w[c["col"]] = c["width"]
+        if c["rowspan"] == 1 and c.get("height"):
+            row_h[c["row"]] = c["height"]
+    _resolve_dims(col_w, cells, "col", "colspan", "width")
+    _resolve_dims(row_h, cells, "row", "rowspan", "height")
+
+    col_x = [0]
+    for w in col_w:
+        col_x.append(col_x[-1] + w)
+    row_y = [0]
+    for h in row_h:
+        row_y.append(row_y[-1] + h)
+    table_w, table_h = col_x[-1], row_y[-1]
+
+    for c in cells:
+        x = col_x[c["col"]]
+        y = row_y[c["row"]]
+        w = col_x[c["col"] + c["colspan"]] - x
+        h = row_y[c["row"] + c["rowspan"]] - y
+        c["x"], c["y"], c["w"], c["h"] = x, y, w, h
+        c["nx"] = x / table_w if table_w else 0
+        c["ny"] = y / table_h if table_h else 0
+        c["nw"] = w / table_w if table_w else 0
+        c["nh"] = h / table_h if table_h else 0
+    return {"col_w": col_w, "row_h": row_h, "table_w": table_w, "table_h": table_h}
+
+
+def hit_test_cell(cells: list, nx: float, ny: float):
+    """정규화 좌표 (nx,ny)∈[0,1]를 포함하는 셀의 (row,col) 반환 — 핀→셀 역추적.
+
+    cells는 compute_table_geometry로 nx,ny,nw,nh가 주입돼 있어야 한다.
+    반열림 [x,x+w) 우선, 우/하단 엣지(nx==1,ny==1)는 닫힘 폴백으로 마지막 셀에 귀속.
+    포함 셀이 없으면 None.
+    """
+    for c in cells:
+        if c["nx"] <= nx < c["nx"] + c["nw"] and c["ny"] <= ny < c["ny"] + c["nh"]:
+            return (c["row"], c["col"])
+    for c in cells:  # 엣지 폴백 (닫힘 구간)
+        if c["nx"] <= nx <= c["nx"] + c["nw"] and c["ny"] <= ny <= c["ny"] + c["nh"]:
+            return (c["row"], c["col"])
+    return None
+
+
+def scan_hwpx_grid(path: str) -> dict:
+    """회의록 HWPX 템플릿의 첫 번째 표 전체 셀을 기하 정밀 그리드로 추출.
+
+    반환: {ok, row_cnt, col_cnt, table_w, table_h, col_w, row_h,
+           cells: [{row, col, text, colspan, rowspan, x, y, w, h, nx, ny, nw, nh}], error?}
+    각 cell.text 는 라벨("사업명" 등) 또는 기존 샘플값. x,y,w,h는 HWPUNIT 절대좌표,
+    nx,ny,nw,nh는 0..1 정규화 — 프론트가 실제 비율로 양식을 렌더하고 핀을 역추적한다.
+    기존 키(row,col,text,colspan,rowspan)는 그대로 유지(후방호환).
+    colspan/rowspan(cellSpan)은 병합셀 반영. cellSz 누락 시 compute_table_geometry 폴백.
     외부 표 직계 tr/tc만 순회하므로 중첩표(사진표) 셀은 그리드에 포함되지 않는다.
     """
     try:
@@ -180,6 +282,14 @@ def scan_hwpx_grid(path: str) -> dict:
                 rowspan = int(span.attrib.get("rowSpan", "1")) if span is not None else 1
             except ValueError:
                 colspan = rowspan = 1
+            sz = tc.find(f"{_HP}cellSz")
+            width = height = None
+            if sz is not None:
+                try:
+                    width = int(sz.attrib.get("width"))
+                    height = int(sz.attrib.get("height"))
+                except (TypeError, ValueError):
+                    width = height = None
             sl = tc.find(f"{_HP}subList")
             txt = ""
             if sl is not None:
@@ -190,9 +300,13 @@ def scan_hwpx_grid(path: str) -> dict:
                         lines.append(line)
                 txt = " ⏎ ".join(lines)
             cells.append({"row": r, "col": c, "text": txt[:120],
-                          "colspan": colspan, "rowspan": rowspan})
+                          "colspan": colspan, "rowspan": rowspan,
+                          "width": width, "height": height})
 
-    return {"ok": True, "row_cnt": max_r + 1, "col_cnt": max_c + 1, "cells": cells}
+    geo = compute_table_geometry(cells)
+    return {"ok": True, "row_cnt": max_r + 1, "col_cnt": max_c + 1,
+            "table_w": geo["table_w"], "table_h": geo["table_h"],
+            "col_w": geo["col_w"], "row_h": geo["row_h"], "cells": cells}
 
 
 def scan_folder(folder: str) -> list:

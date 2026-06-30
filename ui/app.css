@@ -479,39 +479,43 @@ svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;
 .mn-preset-actions{display:flex;flex-wrap:wrap;gap:6px;border-top:1px solid var(--line2);padding-top:10px}
 .mn-preset-actions .btn-mini{flex:1;justify-content:center;min-width:64px}
 
-/* ===== 매핑 편집기 (T-F2) ===== */
-.mn-map-layout{display:grid;grid-template-columns:1fr 340px;gap:18px;align-items:start}
-.mn-map-gridwrap{max-height:60vh;overflow:auto;border:1px solid var(--line);border-radius:10px;background:var(--bg)}
-.mn-grid-table{border-collapse:collapse;width:100%}
-.mn-grid-cell{border:1px solid var(--line);padding:7px 8px;vertical-align:top;cursor:pointer;
-  min-width:90px;background:var(--panel);transition:background .12s;position:relative}
-.mn-grid-cell:hover{background:var(--brand-soft)}
-.mn-grid-table tr:first-child .mn-grid-cell{background:var(--bg2,#F4F6FB)}
-.mn-grid-cell.assigning{outline:2px dashed var(--brand);outline-offset:-3px}
-.mn-cell-coord{font-size:10px;color:var(--ink3);font-weight:600;margin-bottom:2px}
-.mn-cell-text{font-size:12px;color:var(--ink);line-height:1.4;word-break:break-all}
-.mn-cell-empty{color:var(--ink3);font-style:italic}
-.mn-cell-badge{display:inline-block;margin:4px 4px 0 0;padding:2px 7px;border-radius:10px;
-  font-size:10.5px;font-weight:700;background:var(--brand-soft);color:var(--brand)}
-.mn-cell-pin{display:inline-block;margin-top:4px;padding:2px 7px;border-radius:10px;
-  font-size:10.5px;font-weight:700;background:var(--orange-soft);color:#B45309}
-.mn-map-side{display:flex;flex-direction:column;gap:16px}
-.mn-map-slots{display:flex;flex-direction:column;gap:8px}
-.mn-slot-row{display:flex;align-items:center;gap:8px}
-.mn-slot-row.assigning{background:var(--brand-soft);border-radius:8px;padding:4px 6px;margin:-4px -6px}
-.mn-slot-label{width:64px;flex-shrink:0;font-size:12.5px;font-weight:700;color:var(--ink2)}
-.mn-slot-sel,.mn-cs-cell{flex:1;min-width:0;border:1px solid var(--line);border-radius:7px;
-  padding:6px 8px;font-size:12px;background:var(--bg);color:var(--ink)}
-.mn-slot-pick{flex-shrink:0}
-.mn-map-custom h4,.mn-map-pin h4{font-size:13px;font-weight:800;margin-bottom:8px;
-  display:flex;align-items:center;gap:10px}
-.mn-custom-row{display:flex;align-items:center;gap:6px;margin-bottom:6px}
-.mn-cs-label{flex:1;min-width:0;border:1px solid var(--line);border-radius:7px;padding:6px 8px;font-size:12px}
-.mn-cs-del{flex-shrink:0}
-.mn-map-pin{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px;
-  display:flex;flex-direction:column;gap:8px}
-.mn-map-pin label{display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600;color:var(--ink2)}
-.mn-map-pin input{border:1px solid var(--line);border-radius:7px;padding:6px 8px;font-size:13px}
+/* ===== 매핑 편집기 (T-F2 이미지-핀) ===== */
+.mn-map-layout{display:grid;grid-template-columns:1fr 300px;gap:18px;align-items:start}
+.mn-map-gridwrap{max-height:64vh;overflow:auto;border:1px solid var(--line);border-radius:10px;
+  background:var(--bg2,#F4F6FB);padding:16px;display:flex;justify-content:center}
+/* 양식 이미지 캔버스 — 실제 표 비율(폭은 JS, 높이는 비율로 산출) */
+.mn-map-canvas{position:relative;background:#fff;box-shadow:var(--shadow);flex-shrink:0;cursor:crosshair}
+#mn-map-layer{position:absolute;inset:0}
+.mn-cell-box{position:absolute;box-sizing:border-box;border:1px solid #C4CCDA;overflow:hidden;
+  padding:3px 4px;pointer-events:none;display:flex;flex-direction:column;gap:1px}
+.mn-cell-box.mapped{background:var(--brand-soft);border-color:var(--brand)}
+.mn-cell-coord{font-size:9px;color:var(--ink3);font-weight:700;line-height:1}
+.mn-cell-text{font-size:10px;color:var(--ink2);line-height:1.25;word-break:break-all;overflow:hidden}
+/* 자유 위치 핀 마커 (클릭한 픽셀 위치) */
+.mn-pin{position:absolute;transform:translate(-50%,-100%);display:flex;align-items:center;gap:3px;
+  padding:2px 7px 2px 4px;border-radius:11px;background:#fff;border:1.5px solid var(--orange,#F59E0B);
+  box-shadow:0 2px 6px rgba(0,0,0,.18);white-space:nowrap;cursor:pointer;z-index:5}
+.mn-pin.std{border-color:var(--brand)}
+.mn-pin.active{outline:2px solid var(--brand);outline-offset:1px;z-index:6}
+.mn-pin-dot{font-size:12px;line-height:1}
+.mn-pin-label{font-size:11px;font-weight:800;color:var(--ink)}
+/* 핀 팝오버 */
+.mn-pin-pop{position:absolute;z-index:20;width:210px;background:#fff;border:1px solid var(--line);
+  border-radius:10px;box-shadow:var(--shadow-h);padding:11px 12px;display:flex;flex-direction:column;gap:8px;cursor:default}
+.mn-pin-pop-hd{font-size:12px;font-weight:800;color:var(--ink2)}
+.mn-pin-pop label{display:flex;flex-direction:column;gap:4px;font-size:11.5px;font-weight:600;color:var(--ink2)}
+.mn-pin-pop select,.mn-pin-pop input{border:1px solid var(--line);border-radius:7px;padding:6px 8px;
+  font-size:12.5px;background:var(--bg);color:var(--ink)}
+.mn-map-side{display:flex;flex-direction:column;gap:10px}
+.mn-map-side-h{font-size:13px;font-weight:800;color:var(--ink)}
+.mn-map-status{display:flex;flex-direction:column;gap:5px}
+.mn-status-row{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding:5px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.mn-status-row.on{border-color:var(--brand);background:var(--brand-soft)}
+.mn-status-label{font-size:12px;font-weight:700;color:var(--ink2)}
+.mn-status-val{font-size:11.5px;font-weight:700;color:var(--ink3)}
+.mn-status-row.on .mn-status-val{color:var(--brand)}
+.mn-status-sep{font-size:11px;font-weight:800;color:var(--ink3);margin-top:6px}
 
 /* 스크롤바 */
 ::-webkit-scrollbar{width:10px;height:10px}
