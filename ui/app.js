@@ -1642,6 +1642,7 @@ async function refreshMinutesDashboard() {
   $('#mnd-folder-path').title = state.minutesFolder || '';
   renderMinutesStats(r.stats);
   renderMinutesGrid();
+  maybeAutoShowGallery();   // 회의록 메뉴 첫 진입 시 갤러리 자동 표시(9-d, 세션 1회)
 }
 
 function renderMinutesStats(s) {
@@ -1731,6 +1732,7 @@ async function reEditMinutes(jsonPath) {
 =================================================================== */
 let minutesAttachments = [];  // [{ name, markdown, chars }]
 let minutesDraft = null;      // 검토 중인 MINUTES_SCHEMA 초안
+let _unmappedWarned = false;  // 미매핑 경고 1회 노출 후 진행 허용(T-F3)
 
 /* 드롭존 상태·배선·변환·칩 렌더는 견적 AI와 공용 헬퍼 사용
    (setDropzoneState / wireDropzone / convertInto / renderChips) */
@@ -1857,6 +1859,21 @@ async function generateMinutes() {
     if (box) { box.textContent = '회의주제를 입력하세요.'; box.className = 'ai-status warn'; }
     return;
   }
+  // 미매핑 슬롯 경고 1회 — 활성 커스텀 양식에 미매핑이 있으면 빈 칸 생성 안내 후 진행 허용(A-5/C-2)
+  if (!_unmappedWarned) {
+    const t = await call('get_minutes_template');
+    const um = (t.ok && t.is_custom && !t.is_standard) ? (t.unmapped || []) : [];
+    if (um.length) {
+      _unmappedWarned = true;
+      const labels = um.map(s => MN_SLOT_LABELS[s] || s).join(', ');
+      const box = $('#mn-r-status');
+      if (box) {
+        box.textContent = `미매핑 항목(${labels})은 빈 칸으로 생성됩니다. 한 번 더 [회의록 HWPX 생성]을 누르면 그대로 진행합니다.`;
+        box.className = 'ai-status warn';
+      }
+      return;
+    }
+  }
   overlay(true, 'HWPX 생성 중...');
   const r = await call('generate_minutes', {
     data,
@@ -1879,7 +1896,394 @@ function initMinutesView() {
   renderMinutesChips();
   setMnStatus('');
   showMinutesStep(1);
+  _unmappedWarned = false;   // 새 작성 시작 시 미매핑 경고 재무장
   refreshConvertStatus();
+}
+
+/* ===================================================================
+   회의록 양식 Preset 갤러리 (T-F1) + 매핑 편집기 (T-F2)
+   — 표시·입력만. 좌표/매핑 계산·검증은 모두 백엔드(save_minutes_cellmap 등).
+=================================================================== */
+const MN_SLOT_ORDER = ['business_name', 'meeting_date', 'meeting_place',
+                       'meeting_topic', 'participants', 'total_count', 'content'];
+const MN_SLOT_LABELS = {
+  business_name: '사업명', meeting_date: '회의 일시', meeting_place: '회의 장소',
+  meeting_topic: '회의 주제', participants: '참석자', total_count: '총 인원',
+  content: '회의 내용',
+};
+const clone = (o) => JSON.parse(JSON.stringify(o == null ? null : o));
+function aiKeySet() {
+  const p = state.config && state.config.ai_provider;
+  return !!(state.config && (state.config.ai_keys_set || {})[p]);
+}
+function normCellMap(m) {
+  const o = {};
+  for (const k in (m || {})) {
+    const v = m[k];
+    if (Array.isArray(v) && v.length >= 2) o[k] = [+v[0], +v[1]];
+  }
+  return o;
+}
+
+/* ── 갤러리 ── */
+let _galleryProceed = false;
+let _gallerySeenSession = false;
+
+async function loadPresetsAndRender() {
+  const r = await call('list_minutes_presets');
+  if (!r.ok) { toast(r.error || '양식 목록을 불러오지 못했습니다', 'err'); return null; }
+  state.minutesPresets = r.presets || [];
+  state.galleryAutoshow = r.gallery_autoshow !== false;
+  $('#mn-gallery-autoshow').checked = !state.galleryAutoshow;
+  renderMinutesGallery();
+  return r;
+}
+
+async function openMinutesGallery(proceed) {
+  _galleryProceed = !!proceed;
+  _gallerySeenSession = true;
+  overlay(true, '양식 목록 불러오는 중...');
+  const r = await loadPresetsAndRender();
+  overlay(false);
+  if (!r) return;
+  $('#mn-gallery-modal').classList.remove('hidden');
+}
+
+/* 회의록 메뉴 첫 진입 시 자동 표시(9-d, 세션 1회) */
+async function maybeAutoShowGallery() {
+  if (_gallerySeenSession) return;
+  _gallerySeenSession = true;
+  const r = await call('list_minutes_presets');
+  if (!r.ok || r.gallery_autoshow === false) return;
+  state.minutesPresets = r.presets || [];
+  state.galleryAutoshow = true;
+  $('#mn-gallery-autoshow').checked = false;
+  _galleryProceed = false;
+  renderMinutesGallery();
+  $('#mn-gallery-modal').classList.remove('hidden');
+}
+
+function closeGallery() { $('#mn-gallery-modal').classList.add('hidden'); }
+
+function presetBadge(p) {
+  if (!p.exists) return '<span class="badge external">파일 없음</span>';
+  if (p.is_standard) return '<span class="badge json">표준 구조</span>';
+  if (p.has_fieldmap) {
+    let b = `<span class="badge editable">AI 매핑 ${p.mapped}개</span>`;
+    if ((p.unmapped || []).length) b += ` <span class="badge external">미매핑 ${p.unmapped.length}</span>`;
+    return b;
+  }
+  return '<span class="badge external">미매핑</span>';
+}
+
+function renderMinutesGallery() {
+  const wrap = $('#mn-gallery-cards');
+  wrap.innerHTML = '';
+  (state.minutesPresets || []).forEach(p => {
+    const c = el('div', 'mn-preset-card' + (p.active ? ' active' : ''));
+    c.innerHTML = `
+      <div class="mn-preset-top">
+        <div class="mn-preset-name" title="${esc(p.name)}">${esc(p.name)}</div>
+        ${p.active ? '<span class="mn-preset-active">✓ 사용 중</span>' : ''}
+      </div>
+      <div class="mn-preset-badges">${presetBadge(p)}</div>
+      <div class="mn-preset-sub">${p.is_builtin ? '내장 양식' : '내 양식'}${
+        (p.exists && !p.is_standard && p.has_fieldmap) ? ` · 매핑 ${p.mapped}/7` : ''}</div>
+      <div class="mn-preset-actions"></div>`;
+    c.addEventListener('click', (e) => { if (e.target.closest('button')) return; selectPresetCard(p.id); });
+    const act = $('.mn-preset-actions', c);
+    if (!p.is_builtin && p.exists) {
+      const edit = el('button', 'btn btn-mini', '매핑 편집');
+      edit.type = 'button';
+      edit.onclick = () => { closeGallery(); openMinutesMapEditor(p.template_path, p.name); };
+      act.appendChild(edit);
+    }
+    if (!p.is_builtin) {
+      const ren = el('button', 'btn btn-mini', '이름변경'); ren.type = 'button';
+      ren.onclick = () => renamePreset(p);
+      const del = el('button', 'btn btn-mini', '삭제'); del.type = 'button';
+      del.onclick = () => openPresetDelete(p);
+      act.appendChild(ren); act.appendChild(del);
+    }
+    wrap.appendChild(c);
+  });
+}
+
+async function selectPresetCard(id) {
+  const r = await call('select_minutes_preset', id);
+  if (!r.ok) { toast(r.error || '양식 선택 실패', 'err'); return; }
+  await loadPresetsAndRender();   // active·template_path 동기화 후 재렌더
+  toast('양식이 선택됐습니다', 'ok');
+}
+
+async function galleryProceed() {
+  closeGallery();
+  _minutesComposeInited = true;
+  initMinutesView();
+  switchView('minutes', 'compose');
+}
+
+async function addMyPresetFromGallery() {
+  const pr = await call('pick_minutes_template_file');
+  if (!pr.ok || pr.cancelled) return;
+  overlay(true, '양식 추가 중...');
+  const a = await call('add_minutes_preset', pr.path);
+  overlay(false);
+  if (!a.ok) { toast(a.error || '양식 추가 실패', 'err'); return; }
+  toast('양식이 추가됐습니다. 이어서 매핑을 편집하세요.', 'ok', 4000);
+  if (a.preset && a.preset.id) await call('select_minutes_preset', a.preset.id);
+  closeGallery();
+  openMinutesMapEditor(a.preset && a.preset.template_path, a.preset && a.preset.name);
+}
+
+async function renamePreset(p) {
+  const name = prompt('새 양식 이름을 입력하세요', p.name);
+  if (name == null || !name.trim()) return;
+  const r = await call('rename_minutes_preset', p.id, name.trim());
+  if (!r.ok) { toast(r.error || '이름 변경 실패', 'err'); return; }
+  await loadPresetsAndRender();
+}
+
+/* 양식 삭제 확인 (US-014: 등록 해제 기본, 파일 삭제는 별도 동의) */
+let _presetDelTarget = null;
+function openPresetDelete(p) {
+  _presetDelTarget = p;
+  $('#mn-preset-del-target').textContent = `"${p.name}" 양식을 목록에서 삭제합니다.`;
+  $('#mn-preset-del-files').checked = false;
+  $('#mn-preset-del-modal').classList.remove('hidden');
+}
+function closePresetDelete() { _presetDelTarget = null; $('#mn-preset-del-modal').classList.add('hidden'); }
+async function confirmPresetDelete() {
+  if (!_presetDelTarget) return;
+  const id = _presetDelTarget.id;
+  const also = $('#mn-preset-del-files').checked;
+  closePresetDelete();
+  const r = await call('delete_minutes_preset', id, also);
+  if (!r.ok) { toast(r.error || '삭제 실패', 'err'); return; }
+  toast(`양식이 삭제됐습니다 (${(r.removed || []).join(', ') || '항목'})`, 'ok');
+  await loadPresetsAndRender();
+}
+
+/* ── 매핑 편집기 ── */
+const mnEditor = { templatePath: '', name: '', grid: [], cellMap: {},
+                   customSlots: [], annotations: [], pinSlot: null, pinCell: null,
+                   cache: {} };   // cache: 세션 내 저장본 복원(템플릿 경로별)
+
+async function openMinutesMapEditor(templatePath, name) {
+  if (!templatePath) { toast('편집할 양식 파일이 없습니다', 'warn'); return; }
+  overlay(true, '양식 표 구조 분석 중...');
+  let gridCells = null, cellMap = {}, customSlots = [], annotations = [];
+  const cached = mnEditor.cache[templatePath];
+  // 저장된 매핑 우선: 세션 캐시 → 디스크 저장본(load_minutes_cellmap) → AI 제안
+  let saved = null;
+  if (!cached) {
+    const sv = await call('load_minutes_cellmap', templatePath);
+    if (sv && sv.ok && sv.has_fieldmap) saved = sv;
+  }
+  if (cached) {
+    cellMap = clone(cached.cellMap); customSlots = clone(cached.customSlots);
+    annotations = clone(cached.annotations);
+  } else if (saved) {
+    // 디스크 저장본 복원 — 사용자가 저장한 cell_map을 그대로 초기 표시
+    cellMap = normCellMap(saved.cell_map);
+    customSlots = saved.custom_slots || [];
+    annotations = saved.annotations || [];
+  } else if (aiKeySet()) {
+    // AI 키 있을 때: grid + cell_map 초기 제안 동시 (scan_minutes_template)
+    const r = await call('scan_minutes_template', templatePath);
+    if (r.ok) {
+      gridCells = (r.grid && r.grid.cells) || null;
+      cellMap = normCellMap(r.cell_map);
+      if (r.ai_error) toast(`AI 매핑 일부 실패 — 수동 매핑으로 완성하세요 (${r.ai_error})`, 'warn', 5000);
+    }
+  }
+  if (!gridCells) {
+    // 오프라인 폴백: AI 없이 격자만 (scan_minutes_grid) — 수동 매핑
+    const g = await call('scan_minutes_grid', templatePath);
+    if (!g.ok) { overlay(false); toast(g.error || '표 구조 분석 실패', 'err', 5000); return; }
+    gridCells = g.cells || [];
+  }
+  overlay(false);
+  mnEditor.templatePath = templatePath;
+  mnEditor.name = name || '';
+  mnEditor.grid = (gridCells || []).map(c => ({
+    row: c.row, col: c.col, text: c.text || '',
+    colspan: c.colspan || 1, rowspan: c.rowspan || 1,
+  }));
+  mnEditor.cellMap = cellMap; mnEditor.customSlots = customSlots;
+  mnEditor.annotations = annotations; mnEditor.pinSlot = null; mnEditor.pinCell = null;
+  $('#mn-map-name').textContent = name || '';
+  $('#mn-map-pin').classList.add('hidden');
+  const warn = $('#mn-map-warn'); warn.className = 'ai-status'; warn.textContent = '';
+  renderMapGrid(); renderMapSlots(); renderMapCustom();
+  $('#mn-map-modal').classList.remove('hidden');
+}
+
+function renderMapGrid() {
+  const rows = {};
+  mnEditor.grid.forEach(c => { (rows[c.row] = rows[c.row] || []).push(c); });
+  const slotAt = {};   // "r,c" -> [표시 라벨]
+  Object.entries(mnEditor.cellMap).forEach(([slot, rc]) => {
+    const k = rc.join(','); (slotAt[k] = slotAt[k] || []).push(MN_SLOT_LABELS[slot] || slot);
+  });
+  mnEditor.customSlots.forEach(s => {
+    const k = (s.cell || []).join(','); (slotAt[k] = slotAt[k] || []).push('★' + (s.label || '커스텀'));
+  });
+  const annAt = {};
+  mnEditor.annotations.forEach(a => { annAt[a.row + ',' + a.col] = a; });
+
+  let html = '<table class="mn-grid-table">';
+  Object.keys(rows).map(Number).sort((a, b) => a - b).forEach(rn => {
+    html += '<tr>';
+    rows[rn].sort((a, b) => a.col - b.col).forEach(c => {
+      const k = c.row + ',' + c.col;
+      const cs = c.colspan > 1 ? ` colspan="${c.colspan}"` : '';
+      const rs = c.rowspan > 1 ? ` rowspan="${c.rowspan}"` : '';
+      const badges = (slotAt[k] || []).map(l => `<span class="mn-cell-badge">${esc(l)}</span>`).join('');
+      const pin = annAt[k]
+        ? `<span class="mn-cell-pin" title="${esc(annAt[k].comment || '')}">📌 ${esc(annAt[k].label || '')}</span>` : '';
+      const txt = (c.text || '').slice(0, 40);
+      const body = txt ? esc(txt) : '<span class="mn-cell-empty">(빈 셀)</span>';
+      html += `<td class="mn-grid-cell${mnEditor.pinSlot ? ' assigning' : ''}" data-row="${c.row}" data-col="${c.col}"${cs}${rs}>
+        <div class="mn-cell-coord">(${c.row},${c.col})</div>
+        <div class="mn-cell-text">${body}</div>${badges}${pin}</td>`;
+    });
+    html += '</tr>';
+  });
+  html += '</table>';
+  $('#mn-map-grid').innerHTML = html;
+  $$('#mn-map-grid .mn-grid-cell').forEach(td =>
+    td.addEventListener('click', () => onMapCellClick(+td.dataset.row, +td.dataset.col)));
+}
+
+function onMapCellClick(r, c) {
+  if (mnEditor.pinSlot) {   // 슬롯 지정 모드: 이 셀을 슬롯에 매핑
+    mnEditor.cellMap[mnEditor.pinSlot] = [r, c];
+    mnEditor.pinSlot = null;
+    renderMapGrid(); renderMapSlots();
+    return;
+  }
+  openPinEditor(r, c);
+}
+
+function cellOptionsHTML() {
+  return mnEditor.grid.map(c =>
+    `<option value="${c.row},${c.col}">(${c.row},${c.col}) ${esc((c.text || '').slice(0, 18))}</option>`).join('');
+}
+
+function renderMapSlots() {
+  const opts = cellOptionsHTML();
+  $('#mn-map-slots').innerHTML = MN_SLOT_ORDER.map(slot => {
+    const assigning = mnEditor.pinSlot === slot;
+    return `<div class="mn-slot-row${assigning ? ' assigning' : ''}">
+      <span class="mn-slot-label">${esc(MN_SLOT_LABELS[slot])}</span>
+      <select class="mn-slot-sel" data-slot="${slot}"><option value="">(미지정)</option>${opts}</select>
+      <button class="btn btn-mini mn-slot-pick" data-slot="${slot}" type="button">${assigning ? '클릭…' : '셀 클릭'}</button>
+    </div>`;
+  }).join('');
+  $$('#mn-map-slots .mn-slot-sel').forEach(sel => {
+    const slot = sel.dataset.slot;
+    const rc = mnEditor.cellMap[slot];
+    sel.value = rc ? `${rc[0]},${rc[1]}` : '';
+    sel.addEventListener('change', () => {
+      if (sel.value) { const [r, c] = sel.value.split(',').map(Number); mnEditor.cellMap[slot] = [r, c]; }
+      else delete mnEditor.cellMap[slot];
+      mnEditor.pinSlot = null;
+      renderMapGrid(); renderMapSlots();
+    });
+  });
+  $$('#mn-map-slots .mn-slot-pick').forEach(b => b.addEventListener('click', () => {
+    mnEditor.pinSlot = (mnEditor.pinSlot === b.dataset.slot) ? null : b.dataset.slot;
+    renderMapSlots(); renderMapGrid();
+  }));
+}
+
+function renderMapCustom() {
+  const wrap = $('#mn-map-custom-list');
+  if (!mnEditor.customSlots.length) { wrap.innerHTML = '<p class="hint">추가한 커스텀 슬롯이 없습니다.</p>'; return; }
+  const opts = cellOptionsHTML();
+  wrap.innerHTML = mnEditor.customSlots.map((s, i) => `
+    <div class="mn-custom-row">
+      <input class="mn-cs-label" data-i="${i}" value="${esc(s.label || '')}" placeholder="라벨">
+      <select class="mn-cs-cell" data-i="${i}"><option value="">(셀)</option>${opts}</select>
+      <button class="btn btn-mini mn-cs-del" data-i="${i}" type="button">삭제</button>
+    </div>`).join('');
+  $$('#mn-map-custom-list .mn-cs-cell').forEach(sel => {
+    const i = +sel.dataset.i;
+    const cell = mnEditor.customSlots[i].cell;
+    sel.value = (Array.isArray(cell) && cell.length) ? cell.join(',') : '';
+    sel.addEventListener('change', () => {
+      if (sel.value) { const [r, c] = sel.value.split(',').map(Number); mnEditor.customSlots[i].cell = [r, c]; }
+      renderMapGrid();
+    });
+  });
+  $$('#mn-map-custom-list .mn-cs-label').forEach(inp =>
+    inp.addEventListener('input', () => { mnEditor.customSlots[+inp.dataset.i].label = inp.value; }));
+  $$('#mn-map-custom-list .mn-cs-del').forEach(b =>
+    b.addEventListener('click', () => { mnEditor.customSlots.splice(+b.dataset.i, 1); renderMapCustom(); renderMapGrid(); }));
+}
+
+function addCustomSlot() {
+  const first = mnEditor.grid[0];
+  if (!first) { toast('격자를 먼저 불러오세요', 'warn'); return; }
+  mnEditor.customSlots.push({ id: 'cs_' + Date.now().toString(36), label: '', cell: [first.row, first.col] });
+  renderMapCustom(); renderMapGrid();
+}
+
+/* 셀 핀(annotation) — 1셀=1핀 */
+function openPinEditor(r, c) {
+  mnEditor.pinCell = [r, c];
+  const a = mnEditor.annotations.find(x => x.row === r && x.col === c);
+  $('#mn-map-pin-cell').textContent = `(${r}, ${c})`;
+  $('#mn-map-pin-label').value = a ? (a.label || '') : '';
+  $('#mn-map-pin-comment').value = a ? (a.comment || '') : '';
+  $('#mn-map-pin').classList.remove('hidden');
+}
+function savePin() {
+  if (!mnEditor.pinCell) return;
+  const [r, c] = mnEditor.pinCell;
+  const label = $('#mn-map-pin-label').value.trim();
+  const comment = $('#mn-map-pin-comment').value.trim();
+  if (!label && !comment) { toast('라벨 또는 메모를 입력하세요', 'warn'); return; }
+  mnEditor.annotations = mnEditor.annotations.filter(a => !(a.row === r && a.col === c));
+  mnEditor.annotations.push({ row: r, col: c, label, comment });
+  $('#mn-map-pin').classList.add('hidden'); mnEditor.pinCell = null;
+  renderMapGrid();
+}
+function delPin() {
+  if (!mnEditor.pinCell) return;
+  const [r, c] = mnEditor.pinCell;
+  mnEditor.annotations = mnEditor.annotations.filter(a => !(a.row === r && a.col === c));
+  $('#mn-map-pin').classList.add('hidden'); mnEditor.pinCell = null;
+  renderMapGrid();
+}
+
+/* 저장 — 단일 경로 save_minutes_cellmap (cell_map + custom_slots + annotations) */
+async function saveMinutesMapping() {
+  const tpl = mnEditor.templatePath;
+  overlay(true, '매핑 저장 중...');
+  const r = await call('save_minutes_cellmap', tpl, mnEditor.cellMap,
+                       mnEditor.customSlots, mnEditor.annotations);
+  overlay(false);
+  if (!r.ok) { toast(r.error || '매핑 저장 실패', 'err', 5000); return; }
+  // 백엔드 정규화 결과로 상태 동기화 (범위밖·중복·1셀1핀 정리본)
+  mnEditor.cellMap = normCellMap(r.cell_map);
+  mnEditor.customSlots = r.custom_slots || [];
+  mnEditor.annotations = r.annotations || [];
+  mnEditor.cache[tpl] = {
+    cellMap: clone(mnEditor.cellMap), customSlots: clone(mnEditor.customSlots),
+    annotations: clone(mnEditor.annotations),
+  };
+  const unmapped = (r.unmapped || []).map(s => MN_SLOT_LABELS[s] || s);
+  const warns = r.warnings || [];
+  const box = $('#mn-map-warn');
+  let msg = '매핑 저장 완료';
+  if (unmapped.length) msg += ` · 미매핑 ${unmapped.length}개 (${unmapped.join(', ')})`;
+  if (warns.length) msg += '\n' + warns.join('\n');
+  box.className = 'ai-status show' + (unmapped.length || warns.length ? ' warn' : '');
+  box.textContent = msg;
+  toast('매핑이 저장됐습니다', 'ok');
+  renderMapGrid(); renderMapSlots(); renderMapCustom();
 }
 
 /* ===================================================================
@@ -2064,11 +2468,28 @@ async function init() {
     else if (!r.cancelled) toast(r.error || '폴더 선택 실패', 'err');
   });
   $('#btn-mnd-rescan').addEventListener('click', refreshMinutesDashboard);
-  $('#btn-new-minutes').addEventListener('click', () => {
-    _minutesComposeInited = true;   // 명시적 리셋이므로 lazy-init 중복 방지
-    initMinutesView();
-    switchView('minutes', 'compose');
+  $('#btn-new-minutes').addEventListener('click', () => openMinutesGallery(true));
+  // 회의록 양식 갤러리 (T-F1)
+  $('#btn-mn-gallery').addEventListener('click', () => openMinutesGallery(false));
+  $('#mn-gallery-close').addEventListener('click', closeGallery);
+  $('#mn-gallery-proceed').addEventListener('click', galleryProceed);
+  $('#mn-gallery-add').addEventListener('click', addMyPresetFromGallery);
+  $('#mn-gallery-autoshow').addEventListener('change', async (e) => {
+    const r = await call('set_minutes_gallery_autoshow', !e.target.checked);
+    if (r.ok) state.galleryAutoshow = r.gallery_autoshow;
   });
+  $('#mn-gallery-modal').addEventListener('click', e => { if (e.target.id === 'mn-gallery-modal') closeGallery(); });
+  // 매핑 편집기 (T-F2)
+  $('#mn-map-cancel').addEventListener('click', () => $('#mn-map-modal').classList.add('hidden'));
+  $('#mn-map-save').addEventListener('click', saveMinutesMapping);
+  $('#mn-map-add-custom').addEventListener('click', addCustomSlot);
+  $('#mn-map-pin-save').addEventListener('click', savePin);
+  $('#mn-map-pin-del').addEventListener('click', delPin);
+  $('#mn-map-modal').addEventListener('click', e => { if (e.target.id === 'mn-map-modal') $('#mn-map-modal').classList.add('hidden'); });
+  // 양식 삭제 확인 (T-F1)
+  $('#mn-preset-del-cancel').addEventListener('click', closePresetDelete);
+  $('#mn-preset-del-confirm').addEventListener('click', confirmPresetDelete);
+  $('#mn-preset-del-modal').addEventListener('click', e => { if (e.target.id === 'mn-preset-del-modal') closePresetDelete(); });
   // 설정 탭 (data-stab — 견적 필터 탭과 별도 바인딩)
   $$('#settings-tabs .tab').forEach(t =>
     t.addEventListener('click', () => showSettingsTab(t.dataset.stab)));
@@ -2168,9 +2589,12 @@ async function init() {
   $('#btn-pick-tpl').addEventListener('click', pickTemplate);
   $('#btn-scan-tpl').addEventListener('click', scanTemplate);
   initTemplateStatus();
-  // 회의록 양식 관리
+  // 회의록 양식 관리 — [분석·적용]은 이제 매핑 편집기를 연다(T-F2)
   $('#btn-pick-mn-tpl').addEventListener('click', pickMinutesTemplate);
-  $('#btn-scan-mn-tpl').addEventListener('click', scanMinutesTemplate);
+  $('#btn-scan-mn-tpl').addEventListener('click', () => {
+    if (_mnTplPath) openMinutesMapEditor(_mnTplPath, $('#mn-tpl-name').textContent);
+    else toast('먼저 커스텀 양식 파일을 선택하세요', 'warn');
+  });
   $('#btn-reset-mn-tpl').addEventListener('click', resetMinutesTemplate);
   initMinutesTemplateStatus();
 
