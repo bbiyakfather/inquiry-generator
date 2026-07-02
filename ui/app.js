@@ -2309,6 +2309,37 @@ function renderSlotStatus() {
   $('#mn-map-status').innerHTML = html;
 }
 
+/* 편집기 내 [AI 자동 매핑] — 언제든 재호출 가능. 표준 슬롯 핀만 AI 결과로 갱신하고
+   커스텀 라벨 핀은 보존한다(1셀=1핀이라 같은 셀에 AI가 다른 슬롯을 제안하면 덮어씀). */
+async function runMinutesAiAutoMap() {
+  if (!aiKeySet()) { toast('AI 자동 매핑을 쓰려면 설정에서 AI API 키를 먼저 등록하세요', 'warn', 5000); return; }
+  const tpl = mnEditor.templatePath;
+  if (!tpl) return;
+  overlay(true, 'AI가 양식을 분석하는 중...');
+  const r = await call('scan_minutes_template', tpl);
+  overlay(false);
+  if (!r.ok) { toast(r.error || 'AI 자동 매핑 실패', 'err', 5000); return; }
+
+  const aiAnns = mnCellMapToAnns(normCellMap(r.cell_map));
+  const aiCells = new Set(aiAnns.map(a => a.row + ',' + a.col));
+  // 기존 핀 중 AI가 새로 지정한 셀과 겹치는 것만 제거, 나머지(커스텀 라벨 등)는 보존
+  mnEditor.annotations = mnEditor.annotations.filter(a => !aiCells.has(a.row + ',' + a.col));
+  aiAnns.forEach(a => {
+    const [nx, ny] = mnPinPos(a);
+    mnEditor.annotations.push({ ...a, nx, ny });
+  });
+  renderMapCanvas(); renderSlotStatus();
+
+  const unmapped = (r.unmapped || []).map(s => MN_SLOT_LABELS[s] || s);
+  let msg = `AI 매핑 ${aiAnns.length}개 완료`;
+  if (unmapped.length) msg += ` · 미매핑 ${unmapped.length}개 (${unmapped.join(', ')})`;
+  if (r.ai_error) msg += `\n${r.ai_error}`;
+  const box = $('#mn-map-warn');
+  box.className = 'ai-status show' + (unmapped.length || r.ai_error ? ' warn' : '');
+  box.textContent = msg;
+  toast('AI 자동 매핑 완료 — 결과를 확인하고 필요하면 직접 수정하세요', 'ok');
+}
+
 /* 저장 — 단일 경로 save_minutes_cellmap (cell_map(핀에서 도출) + annotations) */
 async function saveMinutesMapping() {
   const tpl = mnEditor.templatePath;
@@ -2526,6 +2557,7 @@ async function init() {
   // 매핑 편집기 (T-F2)
   $('#mn-map-cancel').addEventListener('click', () => $('#mn-map-modal').classList.add('hidden'));
   $('#mn-map-save').addEventListener('click', saveMinutesMapping);
+  $('#mn-map-ai').addEventListener('click', runMinutesAiAutoMap);
   $('#mn-map-canvas').addEventListener('click', onCanvasClick);
   $('#mn-pop-slot').addEventListener('change', mnTogglePopCustom);
   $('#mn-pop-save').addEventListener('click', savePinPop);

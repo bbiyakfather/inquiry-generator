@@ -507,7 +507,8 @@ svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;
 .mn-pin-pop select,.mn-pin-pop input{border:1px solid var(--line);border-radius:7px;padding:6px 8px;
   font-size:12.5px;background:var(--bg);color:var(--ink)}
 .mn-map-side{display:flex;flex-direction:column;gap:10px}
-.mn-map-side-h{font-size:13px;font-weight:800;color:var(--ink)}
+.mn-map-side-h{font-size:13px;font-weight:800;color:var(--ink);
+  display:flex;align-items:center;justify-content:space-between;gap:8px}
 .mn-map-status{display:flex;flex-direction:column;gap:5px}
 .mn-status-row{display:flex;align-items:center;justify-content:space-between;gap:8px;
   padding:5px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
